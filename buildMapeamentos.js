@@ -1,31 +1,7 @@
 // utils.js
 const mapeamentos = require('./mapeamentos');
 
-const booleanColumns1True = [
-  'recebe_push_noti',
-  'acesso_academia',
-  'app_utiliza',
-  'app_cadastra_residente',
-  'app_edita_residente',
-  'app_cadastra_veiculo',
-  'app_edita_veiculo',
-  'app_cadastra_pet',
-  'app_edita_pet',
-  'permitido_grupo_pessoas',
-  'permitido_bicileta',
-  'autorizado_facial',
-  'autorizado_qr',
-  'requer_revista',
-  'liberado',
-  'controle_letra_a',
-  'controle_letra_b',
-  'controle_letra_c',
-  'controle_letra_d'
-];
-
-const booleanColumns1False = [
-  'ativo',
-];
+const { booleanColumnsTrue, booleanColumnsFalse } = require('./booleans');
 
 // Função para construir dinamicamente columns e values
 function buildColumnsAndValues(row, tipo) {
@@ -42,9 +18,9 @@ function buildColumnsAndValues(row, tipo) {
     const value = row[sourceKey]; // Valor do campo no JSON
 
     // Verifica se a coluna é uma coluna booleana
-    if (booleanColumns1True.includes(targetColumn)) {
+    if (booleanColumnsTrue.includes(targetColumn)) {
       values.push(value === 1);
-    } else if (booleanColumns1False.includes(targetColumn)) {
+    } else if (booleanColumnsFalse.includes(targetColumn)) {
       values.push(value === 0);
     } else if (targetColumn === 'documento') {
       values.push(value || 'N/A');

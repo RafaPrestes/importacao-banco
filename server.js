@@ -39,6 +39,20 @@ const pesoMap = {
   5: 'outro',
 }
 
+const letraControle = {
+  1: 'a',
+  2: 'b',
+  3: 'c',
+  4: 'd',
+  5: 'outros',
+}
+
+const facialTipoLib = {
+  1: 'unica',
+  2: 'periodo',
+  3: 'ambas',
+}
+
 // Função genérica para inserir dados em uma tabela PostgreSQL
 async function insertIntoPostgres(table, columns, values, conflictColumn = null) {
   const client = await pool.connect();
@@ -476,14 +490,13 @@ async function migratePets() {
               columns.push('unidade_id');
               values.push(unidadeId);
 
-
+              // inserindo a espécie baseado no id vindo do firebird
               const especie = especieMap[row.ID_TIPO] || 'outros';
-
               columns.push('especie');
               values.push(especie);
 
+              // inserindo o peso baseado no id vindo do firebird
               const peso = pesoMap[row.ID_PESO] || 'outro';
-
               columns.push('peso');
               values.push(peso);
 
@@ -495,6 +508,93 @@ async function migratePets() {
             resolve();
           } catch (error) {
             reject(`Erro ao migrar pets: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
+
+async function migrateOcorrencias() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_OCORRENCIA',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_OCORRENCIA: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'ocorrencia');
+
+              // Inserir animais na tabela `ocorrencias`
+              await insertIntoPostgres('ocorrencias', columns, values, 'id_outside');
+            }
+
+            console.log('ocorrencias migrado com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar ocorrencias: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
+async function migrateDispositivos() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_DISPOSITIVO',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_DISPOSITIVO: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'dispositivo');
+
+              // Letra de controle
+              const letra = letraControle[row.ID_LETRA_CONTROLE] || 'outros';
+              columns.push('controle_letra');
+              values.push(letra);
+
+              // Tipos de liberação (unica, período, ambas)
+              const tipoLib = facialTipoLib[row.ID_FACIAL_TIPO_LIB_VIS];
+              columns.push('facial_tipos_lib');
+              values.push(tipoLib);
+
+              // Inserir animais na tabela `dispositivos`
+              await insertIntoPostgres('dispositivos', columns, values, 'id_outside');
+            }
+
+            console.log('dispositivos migrado com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar dispositivos: ${error}`);
           } finally {
             client.release();
             firebirdClient.detach();
@@ -534,6 +634,12 @@ async function migrateAllTables() {
 
     console.log('Iniciando migração de TAB_ANIMAL_DOMESTICO -> pets...');
     await migratePets();
+
+    console.log('Iniciando migração de TAB_OCORRENCIA -> ocorrencias...');
+    await migrateOcorrencias();
+
+    console.log('Iniciando migração de TAB_DISPOSITIVO -> dispositivos...');
+    await migrateDispositivos();
 
     console.log('Migração concluída com sucesso!');
   } catch (error) {
