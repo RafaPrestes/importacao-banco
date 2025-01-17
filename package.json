@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "node-firebird": "^1.1.9",
+    "pg": "^8.13.1"
+  }
+}
