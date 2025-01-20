@@ -53,6 +53,17 @@ const facialTipoLib = {
   3: 'ambas',
 }
 
+const statusLiberacao = {
+  0: 'criada',
+  1: 'aberta',
+  2: 'finalizada',
+}
+
+const tipoLiberacao = {
+  0: 'periodo',
+  1: 'unica',
+}
+
 // Função genérica para inserir dados em uma tabela PostgreSQL
 async function insertIntoPostgres(table, columns, values, conflictColumn = null) {
   const client = await pool.connect();
@@ -307,6 +318,68 @@ async function migrateUnidades() {
   });
 }
 
+async function migrateUnidadesPessoas() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_MORADOR where ID_TIPO_MORADOR <> 99',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_MORADOR: ${err}`);
+          }
+
+          const client = await pool.connect(); // Conecta ao pool uma vez
+          try {
+            for (const row of result) {
+              try {
+                // Consulta unidade
+                const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
+                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
+                if (unidadeResult.rows.length === 0) {
+                  console.warn(`Unidade não encontrada para ID_OUTSIDE: ${row.ID_UNIDADE}`);
+                  continue;
+                }
+                const unidadeId = unidadeResult.rows[0].id;
+
+                // Consulta morador
+                const moradorQuery = `SELECT id FROM pessoas WHERE id_outside = $1 AND role = 'residente'`;
+                const moradorResult = await client.query(moradorQuery, [row.CD_MORADOR]);
+                if (moradorResult.rows.length === 0) {
+                  console.warn(`Morador não encontrado para ID_OUTSIDE: ${row.CD_MORADOR}`);
+                  continue;
+                }
+                const moradorId = moradorResult.rows[0].id;
+
+                // Insere na tabela unidades_pessoas
+                const query = `
+                  INSERT INTO unidades_pessoas (unidade_id, pessoa_id, created_at, updated_at)
+                  VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                  RETURNING unidade_id;
+                `;
+
+                await client.query(query, [unidadeId, moradorId]);
+              } catch (error) {
+                console.error(`Erro ao processar row ID_OUTSIDE=${row.CD_MORADOR}:`, error);
+              }
+            }
+            console.log('Migração de unidades_pessoas concluída com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar unidades_pessoas: ${error}`);
+          } finally {
+            // Libera o cliente e desconecta do Firebird no final
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
 async function migrateVisitantes() {
   return new Promise((resolve, reject) => {
     Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
@@ -425,7 +498,7 @@ async function migrateVeiculosVisitantes() {
               const { columns, values } = buildColumnsAndValues(row, 'veiculo');
 
               // Busca o `id do visitante` no PostgreSQL
-              const visitanteQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante`;
+              const visitanteQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
               const visitanteResult = await client.query(visitanteQuery, [row.ID_VISITANTE]);
 
               if (visitanteResult.rows.length === 0) {
@@ -518,7 +591,6 @@ async function migratePets() {
   });
 }
 
-
 async function migrateOcorrencias() {
   return new Promise((resolve, reject) => {
     Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
@@ -539,14 +611,52 @@ async function migrateOcorrencias() {
               // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
               const { columns, values } = buildColumnsAndValues(row, 'ocorrencia');
 
-              // Inserir animais na tabela `ocorrencias`
+              // Inserir ocorrencias na tabela `ocorrencias`
               await insertIntoPostgres('ocorrencias', columns, values, 'id_outside');
             }
 
-            console.log('ocorrencias migrado com sucesso.');
+            console.log('ocorrencias migradas com sucesso.');
             resolve();
           } catch (error) {
             reject(`Erro ao migrar ocorrencias: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
+async function migrateComunicados() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM COMUNICADO',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar COMUNICADO: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'comunicados');
+
+              // Inserir comunicados na tabela `comunicados`
+              await insertIntoPostgres('comunicados', columns, values, 'id_outside');
+            }
+
+            console.log('comunicados migrados com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar comunicados: ${error}`);
           } finally {
             client.release();
             firebirdClient.detach();
@@ -587,14 +697,196 @@ async function migrateDispositivos() {
               columns.push('facial_tipos_lib');
               values.push(tipoLib);
 
-              // Inserir animais na tabela `dispositivos`
+              // Inserir dispositivos na tabela `dispositivos`
               await insertIntoPostgres('dispositivos', columns, values, 'id_outside');
             }
 
-            console.log('dispositivos migrado com sucesso.');
+            console.log('dispositivos migrados com sucesso.');
             resolve();
           } catch (error) {
             reject(`Erro ao migrar dispositivos: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
+async function migrateLiberacoesAcessosTipo() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_TIPO_ACESSO',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_TIPO_ACESSO: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'liberacoesAcessoTipo');
+
+              // Inserir tipo acesso na tabela `liberacoes_acessos_tipos`
+              await insertIntoPostgres('liberacoes_acessos_tipos', columns, values, 'id_outside');
+            }
+
+            console.log('liberacoes_acessos_tipos migrados com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar liberacoes_acessos_tipos: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
+
+async function migrateLiberacoes() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_ACESSO_PRESTADOR',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'liberacoes');
+
+              const status = statusLiberacao[row.ID_STATUS];
+              columns.push('status');
+              values.push(status);
+
+              const tipo = tipoLiberacao[row.ID_TIPO_LIBERACAO];
+              columns.push('tipo');
+              values.push(tipo);
+
+              const veiculo = `SELECT id FROM veiculos WHERE id_outside = $1 and pessoa_id is not null`;
+              const veiculoResult = await client.query(veiculo, [row.ID_VEICULO_UTILIZADO]);
+
+              if (veiculoResult.rows.length > 0) {
+                const veiculoId = veiculoResult.rows[0].id;
+                columns.push('veiculo_id');
+                values.push(veiculoId);
+              } else {
+                columns.push('veiculo_id');
+                values.push(null);
+              }
+
+              const visitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
+              const visitanteResult = await client.query(visitante, [row.ID_PRESTADOR]);
+
+              if (visitanteResult.rows.length > 0) {
+                const visitanteId = visitanteResult.rows[0].id;
+                columns.push('pessoa_id');
+                values.push(visitanteId);
+              } else {
+                columns.push('pessoa_id');
+                values.push(null);
+              }
+
+              const tipoAcesso = `SELECT id FROM liberacoes_acessos_tipos WHERE id_outside = $1`;
+              const tipoAcessoResult = await client.query(tipoAcesso, [row.ID_TIPO_ACESSO]);
+
+              const tipoAcessoResultId = tipoAcessoResult.rows[0].id;
+
+              columns.push('acesso_tipo_id');
+              values.push(tipoAcessoResultId)
+
+              // Inserir liberacoes na tabela `liberacoes`
+              await insertIntoPostgres('liberacoes', columns, values, 'id_outside');
+            }
+
+            console.log('liberacoes migradas com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar liberacoes: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
+async function migrateLiberacoesUnidades() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_ACESSO_PRESTADOR',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'liberacoesUnidades');
+
+              const liberacaoId = `SELECT id FROM liberacoes WHERE id_outside = $1`;
+              const liberacaoIdResult = await client.query(liberacaoId, [row.CD_ACESSO]);
+
+              if (liberacaoIdResult.rows.length > 0) {
+                const liberacaoId = liberacaoIdResult.rows[0].id;
+                columns.push('liberacao_id');
+                values.push(liberacaoId);
+              }
+
+              const unidade = `SELECT unidade_id FROM unidades_pessoas WHERE pessoa_id = $1`;
+              const unidadeResult = await client.query(unidade, [row.ID_MORADOR]);
+
+              if (unidadeResult.rows.length > 0) {
+                const unidadeId = unidadeResult.rows[0].id;
+                columns.push('unidade_id');
+                values.push(unidadeId);
+              }
+
+              const solicitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'residente'`;
+              const solicitanteResult = await client.query(solicitante, [row.ID_MORADOR]);
+
+              if (solicitanteResult.rows.length > 0) {
+                const solicitanteId = solicitanteResult.rows[0].id;
+                columns.push('solicitante_id');
+                values.push(solicitanteId);
+              }
+
+              // Inserir liberacoes na tabela `liberacoes_unidades`
+              await insertIntoPostgres('liberacoes_unidades', columns, values, 'id_outside');
+            }
+
+            console.log('liberacoes_unidades migradas com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar liberacoes_unidades: ${error}`);
           } finally {
             client.release();
             firebirdClient.detach();
@@ -623,6 +915,9 @@ async function migrateAllTables() {
     console.log('Iniciando migração de TAB_UNIDADE -> unidades');
     await migrateUnidades();
 
+    console.log('Iniciando migração de TAB_MORADOR -> unidades_pessoas');
+    await migrateUnidadesPessoas();
+
     console.log('Iniciando migração de TAB_PRESTADOR -> pessoas...');
     await migrateVisitantes();
 
@@ -638,8 +933,20 @@ async function migrateAllTables() {
     console.log('Iniciando migração de TAB_OCORRENCIA -> ocorrencias...');
     await migrateOcorrencias();
 
+    console.log('Iniciando migração de COMUNICADOS -> comunicados...');
+    await migrateComunicados();
+
     console.log('Iniciando migração de TAB_DISPOSITIVO -> dispositivos...');
     await migrateDispositivos();
+
+    console.log('Iniciando migração de TAB_TIPO_ACESSO -> liberacoes_acessos_tipos...');
+    await migrateLiberacoesAcessosTipo();
+
+    console.log('Iniciando migração de TAB_ACESSO_PRESTADOR -> liberacoes...');
+    await migrateLiberacoes();
+
+    console.log('Iniciando migração de TAB_ACESSO_PRESTADOR -> liberacoes_unidades...');
+    await migrateLiberacoesUnidades();
 
     console.log('Migração concluída com sucesso!');
   } catch (error) {

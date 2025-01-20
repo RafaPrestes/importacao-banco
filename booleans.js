@@ -1,4 +1,4 @@
-export const booleanColumnsTrue = [
+const booleanColumnsTrue = [
   'recebe_push_noti',
   'acesso_academia',
   'app_utiliza',
@@ -39,8 +39,19 @@ export const booleanColumnsTrue = [
   'interno',
   'facial_criancas',
   'academia',
+  'horario_comercial',
+  'controla_antecedente',
+  'seg',
+  'ter',
+  'qua',
+  'qui',
+  'sex',
+  'sab',
+  'dom',
 ];
 
-export const booleanColumnsFalse = [
+const booleanColumnsFalse = [
   'ativo',
 ];
+
+module.exports = { booleanColumnsTrue, booleanColumnsFalse };
