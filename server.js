@@ -1,6 +1,7 @@
 const Firebird = require('node-firebird');
 const { Pool } = require('pg');
 const { buildColumnsAndValues } = require('./buildMapeamentos');
+const ImageProcessing = require('./imgProcessing');
 
 // Configuração do Firebird
 const firebirdConfig = {
@@ -159,6 +160,29 @@ async function migrateMoradores() {
 
               columns.push('classificacao_id');
               values.push(classificacaoId);
+
+              // Converte o Base64 em JPEG e envia para o servidor
+              const imageBlobMorador = await ImageProcessing.imgToBase64(row.IMG_MORADOR);
+              const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
+
+              if (imageBlobMorador) {
+                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobMorador);
+
+                const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
+
+                // Agora adicionamos o `foto_face_id` na tabela `pessoas`
+                columns.push('foto_face_id');
+                values.push(fotoFaceId);
+              }
+
+              if (imageBlobDocumento) {
+                const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
+
+                const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
+
+                columns.push('foto_documento_id');
+                values.push(documentoId);
+              }
 
               // Inserir morador na tabela `pessoas`
               await insertIntoPostgres('pessoas', columns, values, 'id_outside');
@@ -404,6 +428,28 @@ async function migrateVisitantes() {
               columns.push('role');
               values.push(role);
 
+              // Converte o Base64 em JPEG e envia para o servidor
+              const imageBlobVisitante = await ImageProcessing.imgToBase64(row.IMG_FACE);
+              const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
+
+              if (imageBlobVisitante) {
+                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVisitante);
+
+                const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
+
+                columns.push('foto_face_id');
+                values.push(fotoFaceId);
+              }
+
+              if (imageBlobDocumento) {
+                const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
+
+                const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
+
+                columns.push('foto_documento_id');
+                values.push(documentoId);
+              }
+
               // Inserir visitante na tabela `pessoas`
               await insertIntoPostgres('pessoas', columns, values, 'id_outside');
             }
@@ -459,6 +505,18 @@ async function migrateVeiculosMoradores() {
               columns.push('tipo');
               values.push(tipoVeiculo);
 
+              // IMAGEM do veículo
+              const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
+
+              if (imageBlobVeiculo) {
+                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
+
+                const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                columns.push('foto_id');
+                values.push(veiculoImageId);
+              }
+
               // Inserir morador na tabela `pessoas`
               await insertIntoPostgres('veiculos', columns, values, 'id_outside');
             }
@@ -513,6 +571,18 @@ async function migrateVeiculosVisitantes() {
               const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
               columns.push('tipo');
               values.push(tipoVeiculo);
+
+              // IMAGEM do veículo
+              const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
+
+              if (imageBlobVeiculo) {
+                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
+
+                const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                columns.push('foto_id');
+                values.push(veiculoImageId);
+              }
 
               // Inserir morador na tabela `pessoas`
               await insertIntoPostgres('veiculos', columns, values, 'id_outside');
@@ -572,6 +642,18 @@ async function migratePets() {
               const peso = pesoMap[row.ID_PESO] || 'outro';
               columns.push('peso');
               values.push(peso);
+
+              // IMAGEM do pet
+              const imageBlobPet = await ImageProcessing.imgToBase64(row.IMG_ANIMAL);
+
+              if (imageBlobPet) {
+                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobPet);
+
+                const petImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                columns.push('foto_id');
+                values.push(petImageId);
+              }
 
               // Inserir animais na tabela `pets`
               await insertIntoPostgres('pets', columns, values, 'id_outside');
@@ -648,6 +730,18 @@ async function migrateComunicados() {
 
               // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
               const { columns, values } = buildColumnsAndValues(row, 'comunicados');
+
+              // IMAGEM do comunicado
+              const imageBlobComunicado = await ImageProcessing.imgToBase64(row.IMG_COMUNICADO);
+
+              if (imageBlobComunicado) {
+                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobComunicado);
+
+                const comunicadoImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                columns.push('foto_id');
+                values.push(comunicadoImageId);
+              }
 
               // Inserir comunicados na tabela `comunicados`
               await insertIntoPostgres('comunicados', columns, values, 'id_outside');
