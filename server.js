@@ -816,6 +816,8 @@ async function migrateLiberacoes() {
 
               // Inserir liberacoes na tabela `liberacoes`
               await insertIntoPostgres('liberacoes', columns, values, 'id_outside');
+
+              console.log(`inserido liberação do visitante id ${visitanteResult.rows[0]?.id}`)
             }
 
             console.log('liberacoes migradas com sucesso.');
@@ -861,11 +863,11 @@ async function migrateLiberacoesUnidades() {
                 values.push(liberacaoId);
               }
 
-              const unidade = `SELECT unidade_id FROM unidades_pessoas WHERE pessoa_id = $1`;
+              const unidade = `SELECT unidade_id FROM unidades_pessoas up inner join pessoas p on up.pessoa_id = p.id WHERE p.id_outside = $1`;
               const unidadeResult = await client.query(unidade, [row.ID_MORADOR]);
 
               if (unidadeResult.rows.length > 0) {
-                const unidadeId = unidadeResult.rows[0].id;
+                const unidadeId = unidadeResult.rows[0].unidade_id;
                 columns.push('unidade_id');
                 values.push(unidadeId);
               }
@@ -881,6 +883,8 @@ async function migrateLiberacoesUnidades() {
 
               // Inserir liberacoes na tabela `liberacoes_unidades`
               await insertIntoPostgres('liberacoes_unidades', columns, values, 'id_outside');
+
+              console.log(`inserido liberação de id ${liberacaoIdResult.rows[0]?.id} na unidade ${unidadeResult.rows[0]?.unidade_id}`)
             }
 
             console.log('liberacoes_unidades migradas com sucesso.');
