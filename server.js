@@ -1075,7 +1075,7 @@ async function migrateAllTables() {
     console.log('Iniciando migração de TAB_DISPOSITIVO -> dispositivos...');
     await migrateDispositivos();
 
-    console.log('Iniciando migração de TAB_CAMERAS -> cameras...');
+    console.log('Iniciando migração de TAB_CAMERA -> cameras...');
     await migrateCameras();
 
     console.log('Iniciando migração de TAB_TIPO_ACESSO -> liberacoes_acessos_tipos...');
