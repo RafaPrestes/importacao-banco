@@ -176,6 +176,15 @@ const mapping = {
     "NM_SENHA": 'senha',
     "ID_ACADEMIA": 'academia',
   },
+  cameras: {
+    "CD_CAMERA": 'id_outside',
+    "NM_CAMERA": 'nome',
+    "IP_CAMERA": 'ip',
+    "PORTA_CAMERA": 'porta',
+    "NM_USUARIO_CAMERA": 'usuario',
+    "NM_SENHA_CAMERA": 'senha',
+    "DS_URL": 'url_rtsp',
+  },
   liberacoesAcessoTipo: {
     "CD_TIPO_ACESSO": 'id_outside',
     "DS_TIPO_ACESSO": 'nome',

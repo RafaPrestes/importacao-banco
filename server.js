@@ -809,6 +809,44 @@ async function migrateDispositivos() {
   });
 }
 
+async function migrateCameras() {
+  return new Promise((resolve, reject) => {
+    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+
+      firebirdClient.query(
+        'SELECT * FROM TAB_CAMERA',
+        async (err, result) => {
+          if (err) {
+            firebirdClient.detach();
+            return reject(`Erro ao consultar TAB_CAMERA: ${err}`);
+          }
+
+          const client = await pool.connect();
+          try {
+            for (const row of result) {
+
+              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+              const { columns, values } = buildColumnsAndValues(row, 'cameras');
+
+              // Inserir TAB_CAMERA na tabela `cameras`
+              await insertIntoPostgres('cameras', columns, values, 'id_outside');
+            }
+
+            console.log('cameras migradas com sucesso.');
+            resolve();
+          } catch (error) {
+            reject(`Erro ao migrar cameras: ${error}`);
+          } finally {
+            client.release();
+            firebirdClient.detach();
+          }
+        }
+      );
+    });
+  });
+}
+
 async function migrateLiberacoesAcessosTipo() {
   return new Promise((resolve, reject) => {
     Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
@@ -1036,6 +1074,9 @@ async function migrateAllTables() {
 
     console.log('Iniciando migração de TAB_DISPOSITIVO -> dispositivos...');
     await migrateDispositivos();
+
+    console.log('Iniciando migração de TAB_CAMERAS -> cameras...');
+    await migrateCameras();
 
     console.log('Iniciando migração de TAB_TIPO_ACESSO -> liberacoes_acessos_tipos...');
     await migrateLiberacoesAcessosTipo();
