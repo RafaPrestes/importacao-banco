@@ -81,7 +81,7 @@ async function insertIntoPostgres(table, columns, values, conflictColumn = null)
     return result.rows.length > 0 ? result.rows[0].id : null; // Retorna o ID ou null
   } catch (error) {
     console.error(`Erro ao inserir na tabela ${table}:`, error);
-    throw error;
+    return null;
   } finally {
     client.release();
   }
@@ -104,11 +104,19 @@ async function migrateClassificacoes() {
           try {
             for (const row of result) {
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'pessoa_classificacao');
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'pessoa_classificacao');
 
-              // Inserir morador na tabela `pessoas_classificacoes`
-              await insertIntoPostgres('pessoas_classificacoes', columns, values, 'id_outside');
+                // Inserir morador na tabela `pessoas_classificacoes`
+                const insertedId = await insertIntoPostgres('pessoas_classificacoes', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('pessoas_classificacoes migrados com sucesso.');
@@ -142,50 +150,57 @@ async function migrateMoradores() {
           try {
             for (const row of result) {
               const role = 'residente';
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'morador');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'morador');
+                columns.push('role');
+                values.push(role);
 
-              columns.push('role');
-              values.push(role);
+                // Busca o `id da classificacao` no PostgreSQL
+                const classificacaoQuery = `SELECT id FROM pessoas_classificacoes WHERE id_outside = $1`;
+                const classificacaoResult = await client.query(classificacaoQuery, [row.ID_TIPO_MORADOR]);
 
-              // Busca o `id da classificacao` no PostgreSQL
-              const classificacaoQuery = `SELECT id FROM pessoas_classificacoes WHERE id_outside = $1`;
-              const classificacaoResult = await client.query(classificacaoQuery, [row.ID_TIPO_MORADOR]);
+                if (classificacaoResult.rows.length === 0) {
+                  continue;
+                }
+                const classificacaoId = classificacaoResult.rows[0].id;
 
-              if (classificacaoResult.rows.length === 0) {
-                continue;
+                columns.push('classificacao_id');
+                values.push(classificacaoId);
+
+                // Converte o Base64 em JPEG e envia para o servidor
+                const imageBlobMorador = await ImageProcessing.imgToBase64(row.IMG_MORADOR);
+                const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
+
+                if (imageBlobMorador) {
+                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobMorador);
+
+                  const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
+
+                  // Agora adicionamos o `foto_face_id` na tabela `pessoas`
+                  columns.push('foto_face_id');
+                  values.push(fotoFaceId);
+                }
+
+                if (imageBlobDocumento) {
+                  const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
+
+                  const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
+
+                  columns.push('foto_documento_id');
+                  values.push(documentoId);
+                }
+
+                // Inserir morador na tabela `pessoas`
+                const insertedId = await insertIntoPostgres('pessoas', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-              const classificacaoId = classificacaoResult.rows[0].id;
-
-              columns.push('classificacao_id');
-              values.push(classificacaoId);
-
-              // Converte o Base64 em JPEG e envia para o servidor
-              const imageBlobMorador = await ImageProcessing.imgToBase64(row.IMG_MORADOR);
-              const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
-
-              if (imageBlobMorador) {
-                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobMorador);
-
-                const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
-
-                // Agora adicionamos o `foto_face_id` na tabela `pessoas`
-                columns.push('foto_face_id');
-                values.push(fotoFaceId);
-              }
-
-              if (imageBlobDocumento) {
-                const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
-
-                const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
-
-                columns.push('foto_documento_id');
-                values.push(documentoId);
-              }
-
-              // Inserir morador na tabela `pessoas`
-              await insertIntoPostgres('pessoas', columns, values, 'id_outside');
             }
 
             console.log('Moradores migrados com sucesso.');
@@ -218,12 +233,20 @@ async function migrateUnidadesGrupos() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'unidades_grupos');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'unidades_grupos');
+                // Inserir unidade na tabela `unidades`
+                const insertedId = await insertIntoPostgres('unidades_grupos', columns, values, 'id_outside');
 
-              // Inserir unidade na tabela `unidades`
-              await insertIntoPostgres('unidades_grupos', columns, values, 'id_outside');
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('unidades_grupos migrados com sucesso.');
@@ -256,11 +279,19 @@ async function migrateUnidadeStatus() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'unidades_status');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'unidades_status');
+                const insertedId = await insertIntoPostgres('unidades_status', columns, values, 'id_outside');
 
-              await insertIntoPostgres('unidades_status', columns, values, 'id_outside');
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('unidades_status migrados com sucesso.');
@@ -293,41 +324,49 @@ async function migrateUnidades() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'unidades');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'unidades');
+                // Consulta para o grupo da unidade
+                const unidadeGrupoQuery = `SELECT id FROM unidades_grupos WHERE id_outside = $1`;
+                const unidadeGrupoResult = await client.query(unidadeGrupoQuery, [row.ID_GRUPO_UNIDADE]);
 
-              // Consulta para o grupo da unidade
-              const unidadeGrupoQuery = `SELECT id FROM unidades_grupos WHERE id_outside = $1`;
-              const unidadeGrupoResult = await client.query(unidadeGrupoQuery, [row.ID_GRUPO_UNIDADE]);
+                if (unidadeGrupoResult.rows.length > 0) {
+                  const unidadeGrupoId = unidadeGrupoResult.rows[0].id;
+                  columns.push('grupo_unidade_id');
+                  values.push(unidadeGrupoId);
+                } else {
+                  // Se não encontrar, insere NULL
+                  columns.push('grupo_unidade_id');
+                  values.push(null);
+                }
 
-              if (unidadeGrupoResult.rows.length > 0) {
-                const unidadeGrupoId = unidadeGrupoResult.rows[0].id;
-                columns.push('grupo_unidade_id');
-                values.push(unidadeGrupoId);
-              } else {
-                // Se não encontrar, insere NULL
-                columns.push('grupo_unidade_id');
-                values.push(null);
+                // Consulta para o status da unidade
+                const unidadeStatusQuery = `SELECT id FROM unidades_grupos WHERE id_outside = $1`;
+                const unidadeStatusResult = await client.query(unidadeStatusQuery, [row.ID_TIPO_UNIDADE]);
+
+                if (unidadeStatusResult.rows.length > 0) {
+                  const unidadeStatusId = unidadeStatusResult.rows[0].id;
+                  columns.push('status_id');
+                  values.push(unidadeStatusId);
+                } else {
+                  // Se não encontrar, insere NULL
+                  columns.push('status_id');
+                  values.push(null);
+                }
+                // Inserir morador na tabela `pessoas_classificacoes`
+                const insertedId = await insertIntoPostgres('unidades', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
 
-              // Consulta para o status da unidade
-              const unidadeStatusQuery = `SELECT id FROM unidades_grupos WHERE id_outside = $1`;
-              const unidadeStatusResult = await client.query(unidadeStatusQuery, [row.ID_TIPO_UNIDADE]);
-
-              if (unidadeStatusResult.rows.length > 0) {
-                const unidadeStatusId = unidadeStatusResult.rows[0].id;
-                columns.push('status_id');
-                values.push(unidadeStatusId);
-              } else {
-                // Se não encontrar, insere NULL
-                columns.push('status_id');
-                values.push(null);
-              }
-              // Inserir morador na tabela `pessoas_classificacoes`
-              await insertIntoPostgres('unidades', columns, values, 'id_outside');
             }
-
             console.log('unidades migrados com sucesso.');
             resolve();
           } catch (error) {
@@ -420,38 +459,47 @@ async function migrateVisitantes() {
           const client = await pool.connect();
           try {
             for (const row of result) {
-              const role = 'visitante';
+              try {
+                const role = 'visitante';
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'visitante');
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'visitante');
 
-              columns.push('role');
-              values.push(role);
+                columns.push('role');
+                values.push(role);
 
-              // Converte o Base64 em JPEG e envia para o servidor
-              const imageBlobVisitante = await ImageProcessing.imgToBase64(row.IMG_FACE);
-              const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
+                // Converte o Base64 em JPEG e envia para o servidor
+                const imageBlobVisitante = await ImageProcessing.imgToBase64(row.IMG_FACE);
+                const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
 
-              if (imageBlobVisitante) {
-                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVisitante);
+                if (imageBlobVisitante) {
+                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVisitante);
 
-                const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
+                  const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
 
-                columns.push('foto_face_id');
-                values.push(fotoFaceId);
+                  columns.push('foto_face_id');
+                  values.push(fotoFaceId);
+                }
+
+                if (imageBlobDocumento) {
+                  const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
+
+                  const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
+
+                  columns.push('foto_documento_id');
+                  values.push(documentoId);
+                }
+
+                // Inserir visitante na tabela `pessoas`
+                const insertedId = await insertIntoPostgres('pessoas', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-
-              if (imageBlobDocumento) {
-                const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
-
-                const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
-
-                columns.push('foto_documento_id');
-                values.push(documentoId);
-              }
-
-              // Inserir visitante na tabela `pessoas`
-              await insertIntoPostgres('pessoas', columns, values, 'id_outside');
             }
 
             console.log('Visitantes migrados com sucesso.');
@@ -484,41 +532,49 @@ async function migrateVeiculosMoradores() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'veiculo');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'veiculo');
+                // Busca o `id da unidade` no PostgreSQL
+                const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
+                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
 
-              // Busca o `id da unidade` no PostgreSQL
-              const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
-              const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
+                if (unidadeResult.rows.length === 0) {
+                  continue;
+                }
+                const unidadeId = unidadeResult.rows[0].id;
 
-              if (unidadeResult.rows.length === 0) {
-                continue;
+                columns.push('unidade_id');
+                values.push(unidadeId);
+
+                // verifica o tipo de veículo, se é carro ou moto
+                const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
+                columns.push('tipo');
+                values.push(tipoVeiculo);
+
+                // IMAGEM do veículo
+                const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
+
+                if (imageBlobVeiculo) {
+                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
+
+                  const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                  columns.push('foto_id');
+                  values.push(veiculoImageId);
+                }
+
+                // Inserir morador na tabela `pessoas`
+                const insertedId = await insertIntoPostgres('veiculos', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-              const unidadeId = unidadeResult.rows[0].id;
-
-              columns.push('unidade_id');
-              values.push(unidadeId);
-
-              // verifica o tipo de veículo, se é carro ou moto
-              const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
-              columns.push('tipo');
-              values.push(tipoVeiculo);
-
-              // IMAGEM do veículo
-              const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
-
-              if (imageBlobVeiculo) {
-                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
-
-                const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
-
-                columns.push('foto_id');
-                values.push(veiculoImageId);
-              }
-
-              // Inserir morador na tabela `pessoas`
-              await insertIntoPostgres('veiculos', columns, values, 'id_outside');
             }
 
             console.log('veiculos de moradores migrados com sucesso.');
@@ -551,41 +607,49 @@ async function migrateVeiculosVisitantes() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'veiculo');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'veiculo');
+                // Busca o `id do visitante` no PostgreSQL
+                const visitanteQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
+                const visitanteResult = await client.query(visitanteQuery, [row.ID_VISITANTE]);
 
-              // Busca o `id do visitante` no PostgreSQL
-              const visitanteQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
-              const visitanteResult = await client.query(visitanteQuery, [row.ID_VISITANTE]);
+                if (visitanteResult.rows.length === 0) {
+                  continue;
+                }
+                const visitanteId = visitanteResult.rows[0].id;
 
-              if (visitanteResult.rows.length === 0) {
-                continue;
+                columns.push('pessoa_id');
+                values.push(visitanteId);
+
+                // verifica o tipo de veículo, se é carro ou moto
+                const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
+                columns.push('tipo');
+                values.push(tipoVeiculo);
+
+                // IMAGEM do veículo
+                const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
+
+                if (imageBlobVeiculo) {
+                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
+
+                  const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                  columns.push('foto_id');
+                  values.push(veiculoImageId);
+                }
+
+                // Inserir morador na tabela `pessoas`
+                const insertedId = await insertIntoPostgres('veiculos', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-              const visitanteId = visitanteResult.rows[0].id;
-
-              columns.push('pessoa_id');
-              values.push(visitanteId);
-
-              // verifica o tipo de veículo, se é carro ou moto
-              const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
-              columns.push('tipo');
-              values.push(tipoVeiculo);
-
-              // IMAGEM do veículo
-              const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
-
-              if (imageBlobVeiculo) {
-                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
-
-                const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
-
-                columns.push('foto_id');
-                values.push(veiculoImageId);
-              }
-
-              // Inserir morador na tabela `pessoas`
-              await insertIntoPostgres('veiculos', columns, values, 'id_outside');
             }
 
             console.log('veiculos de visitantes migrados com sucesso.');
@@ -618,45 +682,53 @@ async function migratePets() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'pets');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'pets');
+                const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
+                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
 
-              const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
-              const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
+                if (unidadeResult.rows.length === 0) {
+                  continue;
+                }
+                const unidadeId = unidadeResult.rows[0].id;
 
-              if (unidadeResult.rows.length === 0) {
-                continue;
+                columns.push('unidade_id');
+                values.push(unidadeId);
+
+                // inserindo a espécie baseado no id vindo do firebird
+                const especie = especieMap[row.ID_TIPO] || 'outros';
+                columns.push('especie');
+                values.push(especie);
+
+                // inserindo o peso baseado no id vindo do firebird
+                const peso = pesoMap[row.ID_PESO] || 'outro';
+                columns.push('peso');
+                values.push(peso);
+
+                // IMAGEM do pet
+                const imageBlobPet = await ImageProcessing.imgToBase64(row.IMG_ANIMAL);
+
+                if (imageBlobPet) {
+                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobPet);
+
+                  const petImageId = await ImageProcessing.sendImageToServer(imagePath);
+
+                  columns.push('foto_id');
+                  values.push(petImageId);
+                }
+
+                // Inserir animais na tabela `pets`
+                const insertedId = await insertIntoPostgres('pets', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-              const unidadeId = unidadeResult.rows[0].id;
-
-              columns.push('unidade_id');
-              values.push(unidadeId);
-
-              // inserindo a espécie baseado no id vindo do firebird
-              const especie = especieMap[row.ID_TIPO] || 'outros';
-              columns.push('especie');
-              values.push(especie);
-
-              // inserindo o peso baseado no id vindo do firebird
-              const peso = pesoMap[row.ID_PESO] || 'outro';
-              columns.push('peso');
-              values.push(peso);
-
-              // IMAGEM do pet
-              const imageBlobPet = await ImageProcessing.imgToBase64(row.IMG_ANIMAL);
-
-              if (imageBlobPet) {
-                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobPet);
-
-                const petImageId = await ImageProcessing.sendImageToServer(imagePath);
-
-                columns.push('foto_id');
-                values.push(petImageId);
-              }
-
-              // Inserir animais na tabela `pets`
-              await insertIntoPostgres('pets', columns, values, 'id_outside');
             }
 
             console.log('pets migrados com sucesso.');
@@ -689,12 +761,20 @@ async function migrateOcorrencias() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'ocorrencia');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'ocorrencia');
+                // Inserir ocorrencias na tabela `ocorrencias`
+                const insertedId = await insertIntoPostgres('ocorrencias', columns, values, 'id_outside');
 
-              // Inserir ocorrencias na tabela `ocorrencias`
-              await insertIntoPostgres('ocorrencias', columns, values, 'id_outside');
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('ocorrencias migradas com sucesso.');
@@ -727,24 +807,32 @@ async function migrateComunicados() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'comunicados');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'comunicados');
+                // IMAGEM do comunicado
+                const imageBlobComunicado = await ImageProcessing.imgToBase64(row.IMG_COMUNICADO);
 
-              // IMAGEM do comunicado
-              const imageBlobComunicado = await ImageProcessing.imgToBase64(row.IMG_COMUNICADO);
+                if (imageBlobComunicado) {
+                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobComunicado);
 
-              if (imageBlobComunicado) {
-                const imagePath = await ImageProcessing.base64ToJPEG(imageBlobComunicado);
+                  const comunicadoImageId = await ImageProcessing.sendImageToServer(imagePath);
 
-                const comunicadoImageId = await ImageProcessing.sendImageToServer(imagePath);
+                  columns.push('foto_id');
+                  values.push(comunicadoImageId);
+                }
 
-                columns.push('foto_id');
-                values.push(comunicadoImageId);
+                // Inserir comunicados na tabela `comunicados`
+                const insertedId = await insertIntoPostgres('comunicados', columns, values, 'id_outside');
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-
-              // Inserir comunicados na tabela `comunicados`
-              await insertIntoPostgres('comunicados', columns, values, 'id_outside');
             }
 
             console.log('comunicados migrados com sucesso.');
@@ -777,22 +865,30 @@ async function migrateDispositivos() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'dispositivo');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'dispositivo');
+                // Letra de controle
+                const letra = letraControle[row.ID_LETRA_CONTROLE] || 'outros';
+                columns.push('controle_letra');
+                values.push(letra);
 
-              // Letra de controle
-              const letra = letraControle[row.ID_LETRA_CONTROLE] || 'outros';
-              columns.push('controle_letra');
-              values.push(letra);
+                // Tipos de liberação (unica, período, ambas)
+                const tipoLib = facialTipoLib[row.ID_FACIAL_TIPO_LIB_VIS];
+                columns.push('facial_tipos_lib');
+                values.push(tipoLib);
 
-              // Tipos de liberação (unica, período, ambas)
-              const tipoLib = facialTipoLib[row.ID_FACIAL_TIPO_LIB_VIS];
-              columns.push('facial_tipos_lib');
-              values.push(tipoLib);
+                // Inserir dispositivos na tabela `dispositivos`
+                const insertedId = await insertIntoPostgres('dispositivos', columns, values, 'id_outside');
 
-              // Inserir dispositivos na tabela `dispositivos`
-              await insertIntoPostgres('dispositivos', columns, values, 'id_outside');
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('dispositivos migrados com sucesso.');
@@ -825,12 +921,20 @@ async function migrateCameras() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'cameras');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'cameras');
+                // Inserir TAB_CAMERA na tabela `cameras`
+                const insertedId = await insertIntoPostgres('cameras', columns, values, 'id_outside');
 
-              // Inserir TAB_CAMERA na tabela `cameras`
-              await insertIntoPostgres('cameras', columns, values, 'id_outside');
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('cameras migradas com sucesso.');
@@ -863,12 +967,20 @@ async function migrateLiberacoesAcessosTipo() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'liberacoesAcessoTipo');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'liberacoesAcessoTipo');
+                // Inserir tipo acesso na tabela `liberacoes_acessos_tipos`
+                const insertedId = await insertIntoPostgres('liberacoes_acessos_tipos', columns, values, 'id_outside');
 
-              // Inserir tipo acesso na tabela `liberacoes_acessos_tipos`
-              await insertIntoPostgres('liberacoes_acessos_tipos', columns, values, 'id_outside');
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
+              }
             }
 
             console.log('liberacoes_acessos_tipos migrados com sucesso.');
@@ -902,54 +1014,62 @@ async function migrateLiberacoes() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'liberacoes');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'liberacoes');
+                const status = statusLiberacao[row.ID_STATUS];
+                columns.push('status');
+                values.push(status);
 
-              const status = statusLiberacao[row.ID_STATUS];
-              columns.push('status');
-              values.push(status);
+                const tipo = tipoLiberacao[row.ID_TIPO_LIBERACAO];
+                columns.push('tipo');
+                values.push(tipo);
 
-              const tipo = tipoLiberacao[row.ID_TIPO_LIBERACAO];
-              columns.push('tipo');
-              values.push(tipo);
+                const veiculo = `SELECT id FROM veiculos WHERE id_outside = $1 and pessoa_id is not null`;
+                const veiculoResult = await client.query(veiculo, [row.ID_VEICULO_UTILIZADO]);
 
-              const veiculo = `SELECT id FROM veiculos WHERE id_outside = $1 and pessoa_id is not null`;
-              const veiculoResult = await client.query(veiculo, [row.ID_VEICULO_UTILIZADO]);
+                if (veiculoResult.rows.length > 0) {
+                  const veiculoId = veiculoResult.rows[0].id;
+                  columns.push('veiculo_id');
+                  values.push(veiculoId);
+                } else {
+                  columns.push('veiculo_id');
+                  values.push(null);
+                }
 
-              if (veiculoResult.rows.length > 0) {
-                const veiculoId = veiculoResult.rows[0].id;
-                columns.push('veiculo_id');
-                values.push(veiculoId);
-              } else {
-                columns.push('veiculo_id');
-                values.push(null);
+                const visitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
+                const visitanteResult = await client.query(visitante, [row.ID_PRESTADOR]);
+
+                if (visitanteResult.rows.length > 0) {
+                  const visitanteId = visitanteResult.rows[0].id;
+                  columns.push('pessoa_id');
+                  values.push(visitanteId);
+                } else {
+                  columns.push('pessoa_id');
+                  values.push(null);
+                }
+
+                const tipoAcesso = `SELECT id FROM liberacoes_acessos_tipos WHERE id_outside = $1`;
+                const tipoAcessoResult = await client.query(tipoAcesso, [row.ID_TIPO_ACESSO]);
+
+                const tipoAcessoResultId = tipoAcessoResult.rows[0].id;
+
+                columns.push('acesso_tipo_id');
+                values.push(tipoAcessoResultId)
+
+                // Inserir liberacoes na tabela `liberacoes`
+                const insertedId = await insertIntoPostgres('liberacoes', columns, values, 'id_outside');
+
+                console.log(`inserido liberação do visitante id ${visitanteResult.rows[0]?.id}`)
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-
-              const visitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
-              const visitanteResult = await client.query(visitante, [row.ID_PRESTADOR]);
-
-              if (visitanteResult.rows.length > 0) {
-                const visitanteId = visitanteResult.rows[0].id;
-                columns.push('pessoa_id');
-                values.push(visitanteId);
-              } else {
-                columns.push('pessoa_id');
-                values.push(null);
-              }
-
-              const tipoAcesso = `SELECT id FROM liberacoes_acessos_tipos WHERE id_outside = $1`;
-              const tipoAcessoResult = await client.query(tipoAcesso, [row.ID_TIPO_ACESSO]);
-
-              const tipoAcessoResultId = tipoAcessoResult.rows[0].id;
-
-              columns.push('acesso_tipo_id');
-              values.push(tipoAcessoResultId)
-
-              // Inserir liberacoes na tabela `liberacoes`
-              await insertIntoPostgres('liberacoes', columns, values, 'id_outside');
-
-              console.log(`inserido liberação do visitante id ${visitanteResult.rows[0]?.id}`)
             }
 
             console.log('liberacoes migradas com sucesso.');
@@ -982,41 +1102,49 @@ async function migrateLiberacoesUnidades() {
           const client = await pool.connect();
           try {
             for (const row of result) {
+              try {
+                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
+                const { columns, values } = buildColumnsAndValues(row, 'liberacoesUnidades');
 
-              // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-              const { columns, values } = buildColumnsAndValues(row, 'liberacoesUnidades');
+                const liberacaoId = `SELECT id FROM liberacoes WHERE id_outside = $1`;
+                const liberacaoIdResult = await client.query(liberacaoId, [row.CD_ACESSO]);
 
-              const liberacaoId = `SELECT id FROM liberacoes WHERE id_outside = $1`;
-              const liberacaoIdResult = await client.query(liberacaoId, [row.CD_ACESSO]);
+                if (liberacaoIdResult.rows.length > 0) {
+                  const liberacaoId = liberacaoIdResult.rows[0].id;
+                  columns.push('liberacao_id');
+                  values.push(liberacaoId);
+                }
 
-              if (liberacaoIdResult.rows.length > 0) {
-                const liberacaoId = liberacaoIdResult.rows[0].id;
-                columns.push('liberacao_id');
-                values.push(liberacaoId);
+                const unidade = `SELECT unidade_id FROM unidades_pessoas up inner join pessoas p on up.pessoa_id = p.id WHERE p.id_outside = $1`;
+                const unidadeResult = await client.query(unidade, [row.ID_MORADOR]);
+
+                if (unidadeResult.rows.length > 0) {
+                  const unidadeId = unidadeResult.rows[0].unidade_id;
+                  columns.push('unidade_id');
+                  values.push(unidadeId);
+                }
+
+                const solicitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'residente'`;
+                const solicitanteResult = await client.query(solicitante, [row.ID_MORADOR]);
+
+                if (solicitanteResult.rows.length > 0) {
+                  const solicitanteId = solicitanteResult.rows[0].id;
+                  columns.push('solicitante_id');
+                  values.push(solicitanteId);
+                }
+
+                // Inserir liberacoes na tabela `liberacoes_unidades`
+                const insertedId = await insertIntoPostgres('liberacoes_unidades', columns, values, 'id_outside');
+
+                console.log(`inserido liberação de id ${liberacaoIdResult.rows[0]?.id} na unidade ${unidadeResult.rows[0]?.unidade_id}`)
+
+                if (!insertedId) {
+                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
+                }
+
+              } catch (error) {
+                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
               }
-
-              const unidade = `SELECT unidade_id FROM unidades_pessoas up inner join pessoas p on up.pessoa_id = p.id WHERE p.id_outside = $1`;
-              const unidadeResult = await client.query(unidade, [row.ID_MORADOR]);
-
-              if (unidadeResult.rows.length > 0) {
-                const unidadeId = unidadeResult.rows[0].unidade_id;
-                columns.push('unidade_id');
-                values.push(unidadeId);
-              }
-
-              const solicitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'residente'`;
-              const solicitanteResult = await client.query(solicitante, [row.ID_MORADOR]);
-
-              if (solicitanteResult.rows.length > 0) {
-                const solicitanteId = solicitanteResult.rows[0].id;
-                columns.push('solicitante_id');
-                values.push(solicitanteId);
-              }
-
-              // Inserir liberacoes na tabela `liberacoes_unidades`
-              await insertIntoPostgres('liberacoes_unidades', columns, values, 'id_outside');
-
-              console.log(`inserido liberação de id ${liberacaoIdResult.rows[0]?.id} na unidade ${unidadeResult.rows[0]?.unidade_id}`)
             }
 
             console.log('liberacoes_unidades migradas com sucesso.');
