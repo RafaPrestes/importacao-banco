@@ -262,6 +262,14 @@ async function migrateProprietarios() {
             for (const row of result) {
               const role = 'residente';
               try {
+                // Verificar se a pessoa já existe
+                const verifyPessoaQuery = `SELECT id FROM pessoas WHERE nome = $1`;
+                const verifyPessoaResult = await client.query(verifyPessoaQuery, [row.NM_PROPRIETARIO]);
+
+                if (verifyPessoaResult.rows.length > 0) {
+                  continue;
+                }
+
                 // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
                 const { columns, values } = buildColumnsAndValues(row, 'proprietarios');
 
