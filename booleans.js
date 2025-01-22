@@ -48,6 +48,15 @@ const booleanColumnsTrue = [
   'sex',
   'sab',
   'dom',
+  'pre_liberacao',
+  'aviso_panico',
+  'aviso_tempo_espera',
+  'aviso_correspondencia',
+  'aviso_expedidor',
+  'aviso_bicicleta',
+  'aviso_revista',
+  'aviso_fora_horario',
+  'aviso_crianca',
 ];
 
 const booleanColumnsFalse = [

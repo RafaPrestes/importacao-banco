@@ -23,7 +23,7 @@ class ImageProcessing {
     form.append('file', fs.createReadStream(imagePath));
 
     try {
-      const response = await axios.post('http://192.168.0.12:3337/arquivos', form, {
+      const response = await axios.post('https://api.belsi.com.br/aracari/arquivos', form, {
         headers: {
           ...form.getHeaders(),
         },
@@ -107,9 +107,37 @@ class ImageProcessing {
     if (!field) return null;
 
     const originalImg = await this.bufferToBase64(field);
-    const resizedImg = await this.resize(originalImg);
+    // const resizedImg = await this.resize(originalImg);
 
-    return resizedImg;
+    return originalImg;
+  }
+
+  async bufferToText(field) {
+    let text;
+
+    await new Promise((resolve, reject) => {
+      field((err, name, eventEmitter) => {
+        if (err) return reject(err);
+        const buffers = [];
+        eventEmitter.on('data', (chunk) => {
+          buffers.push(chunk);
+        });
+        eventEmitter.once('end', () => {
+          const buffer = Buffer.concat(buffers);
+          text = buffer.toString('utf-8'); // Converte pra string
+          resolve(text);
+        });
+      });
+    });
+
+    return text;
+  }
+
+  async textFromBlob(field) {
+    if (!field) return null;
+
+    const text = await this.bufferToText(field);
+    return text;
   }
 }
 

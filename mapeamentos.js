@@ -2,8 +2,6 @@ const mapping = {
   morador: {
     "CD_MORADOR": "id_outside",
     "NM_MORADOR": "nome",
-    "NR_CPF_CNPJ": "documento",
-    "NR_RG": "rg",
     "NR_TEL_PESSOAL": "telefone_1",
     "NR_TEL_PESSOAL2": "telefone_2",
     "NR_CELULAR_1": "telefone_3",
@@ -36,6 +34,9 @@ const mapping = {
     "NM_CATEGORIA_CNH": "cnh_categoria",
     "DT_VALIDADE_CNH": "cnh_validade",
   },
+  proprietarios: {
+    "NM_PROPRIETARIO": 'nome'
+  },
   visitante: {
     "CD_PRESTADOR": 'id_outside',
     "NR_RG": 'rg',
@@ -59,7 +60,6 @@ const mapping = {
     "DS_CIDADE": 'endereco_cidade',
     "TELEFONE_PRESTADOR": 'telefone_2',
     "NR_TELEFONE_PESSOAL_2": 'telefone_3',
-    "NR_CPF_CNPJ": 'documento',
     "DS_ESTADO_CIVIL": 'estado_civil',
     "DS_STATUS_ANTECEDENTE": 'antecedente_status_nome',
     "ID_STATUS_ANTECEDENTES": 'antecedente_status_id',
@@ -157,7 +157,6 @@ const mapping = {
     "ID_PASSAGEM_VISITANTE_CARTAO": 'libera_visitante_cartao',
     "ID_PASSAGEM_VISITANTE_TECLADO": 'libera_visitante_teclado',
     "ID_PASSAGEM_VISITANTE_BIO": 'libera_visitante_biometria',
-    "ID_FABRICANTE": 'fabricante',
     "ID_CATRACA": 'catraca',
     "ID_COFRE": 'cofre',
     "ID_AVISO_SONORO": 'aviso_sonoro',
@@ -168,7 +167,6 @@ const mapping = {
     "ID_EXPEDIDOR": 'expedidor',
     "ID_VERIFICA_INAD": 'bloqueia_inadimplentes',
     "ID_DISPOSITIVO_INTERNO": 'interno',
-    "IDS_FACIAL_CLASS_VIS": 'facial_tipos_acesso',
     "ID_FACIAL_CRIANCA": 'facial_criancas',
     "ID_PERM_QR_RESIDENTE": 'libera_residente_qr_code',
     "ID_PERM_QR_PRESTADOR": 'libera_visitante_qr_code',
@@ -220,6 +218,33 @@ const mapping = {
     "ID_LIB_DOM": 'dom',
     "HR_DOM_INI": 'dom_hr_inicio',
     "HR_DOM_FIM": 'dom_hr_fim',
+  },
+  correspondencia: {
+    "CD_ENTREGA_AVISO": 'id_outside',
+    "DS_OBS": 'obs',
+    "DT_PROTOCOLO": 'data_recebimento',
+    "DT_ENTREGA": 'data_entrega',
+    "DS_TIPO": 'tipo',
+    "DS_RASTREIO": 'rastreio',
+    "DS_NOTA_FISCAL": 'nota_fiscal',
+  },
+  eventos: {
+    "CD_EVENTO": 'id_outside',
+    "DT_HR": 'data',
+    "ID_STATUS_ACESSO": 'liberado',
+    "ID_TIPO_STATUS": 'status_id',
+    "NR_IDENTIFICACAO": 'metodo_ident',
+    "ID_PRE_LIBERACAO": 'pre_liberacao',
+    "ID_METODO_ENTRADA": 'metodo',
+    "ID_PANICO": 'aviso_panico',
+    "ID_TEMPO_ESPERA": 'aviso_tempo_espera',
+    "ID_CORRESPONDENCIA": 'aviso_correspondencia',
+    "ID_EXPEDIDOR": 'aviso_expedidor',
+    "ID_BICICLETA": 'aviso_bicicleta',
+    "CONFIDENCE": 'confidence',
+    "ID_REVISTA": 'aviso_revista',
+    "ID_LIB_FORA_HORARIO": 'aviso_fora_horario',
+    "ID_CRIANCA": 'aviso_crianca',
   }
 };
 
