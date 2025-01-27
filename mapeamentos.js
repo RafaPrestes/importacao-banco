@@ -43,7 +43,6 @@ const mapping = {
     "DT_NASCIMENTO": 'dt_nascimento',
     "NM_PRESTADOR": 'nome',
     "NR_TELEFONE_PESSOAL": 'telefone_1',
-    "DS_OBS": 'obs',
     "NM_RAZAO_SOCIAL": 'nome_razao_social',
     "DS_RAMO_EMPRESA": 'empresa_ramo',
     "NM_RESPONSAVEL": 'empresa_responsavel',

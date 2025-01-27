@@ -175,12 +175,14 @@ async function migrateMoradores() {
                 values.push(rg);
 
                 // CPF dos moradores
-                const cpf = row.NR_CPF_CPNJ === null ? 'NÃO DISPONÍVEL' : row.NR_CPF_CPNJ;
+                const cpf = row.NR_CPF_CPNJ === undefined ? 'NÃO DISPONÍVEL' : row.NR_CPF_CPNJ;
                 columns.push('documento');
                 values.push(cpf);
 
                 // Observação convertida de blob para text
-                const observacao = await ImageProcessing.textFromBlob(row.OBS);
+                const observacao = row.OBS
+                  ? await ImageProcessing.textFromBlob(row.OBS)
+                  : null;
                 columns.push('obs');
                 values.push(observacao);
 
@@ -576,14 +578,9 @@ async function migrateVisitantes() {
                 columns.push('role');
                 values.push(role);
 
-                const cpf = row.NR_CPF_CPNJ === null ? 'NÃO DISPONÍVEL' : row.NR_CPF_CPNJ;
+                const cpf = row.NR_CPF_CPNJ === undefined ? 'NÃO DISPONÍVEL' : row.NR_CPF_CPNJ;
                 columns.push('documento');
                 values.push(cpf);
-
-                // Observação convertida de blob para text
-                const observacao = await ImageProcessing.textFromBlob(row.DS_OBS);
-                columns.push('obs');
-                values.push(observacao);
 
                 // Converte o Base64 em JPEG e envia para o servidor
                 const imageBlobVisitante = await ImageProcessing.imgToBase64(row.IMG_FACE);
@@ -607,7 +604,22 @@ async function migrateVisitantes() {
                   values.push(documentoId);
                 }
 
-                // Inserir visitante na tabela `pessoas`
+                // Realiza o SELECT para obter o DS_OBS convertido
+                const obsQuery = `SELECT CAST(DS_OBS AS VARCHAR(4000)) AS observacao FROM TAB_PRESTADOR WHERE CD_PRESTADOR = ?`;
+                const [obsResult] = await new Promise((resolve, reject) => {
+                  firebirdClient.query(obsQuery, [row.CD_PRESTADOR], (err, result) => {
+                    if (err) return reject(err);
+                    resolve(result);
+                  });
+                });
+
+                if (obsResult) {
+                  const observacao = obsResult.OBSERVACAO || null;
+                  columns.push('obs');
+                  values.push(observacao);
+                }
+
+                // Inserir visitante na tabela`pessoas`
                 const insertedId = await insertIntoPostgres('pessoas', columns, values, 'id_outside');
 
                 if (!insertedId) {
@@ -1459,46 +1471,43 @@ async function migrateEventos() {
   });
 }
 
-async function updateObservacoes() {
+async function updateDataFimLiberacoes() {
   return new Promise((resolve, reject) => {
     Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
       if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
 
       firebirdClient.query(
-        'SELECT * FROM TAB_PRESTADOR',
+        'SELECT * FROM TAB_ACESSO_PRESTADOR where ID_TIPO_LIBERACAO = 1',
         async (err, result) => {
           if (err) {
             firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_PRESTADOR: ${err}`);
+            return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
           }
 
           const client = await pool.connect();
           try {
             for (const row of result) {
 
-              // Busca o `id do visitante` no PostgreSQL
-              const visitanteQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
-              const visitanteResult = await client.query(visitanteQuery, [row.CD_PRESTADOR]);
+              const liberacaoQuery = `SELECT id FROM liberacoes WHERE id_outside = $1'`;
+              const liberacaoResult = await client.query(liberacaoQuery, [row.CD_ACESSO]);
 
-              if (visitanteResult.rows.length === 0) {
+              if (liberacaoResult.rows.length === 0) {
                 continue;
               }
-              const visitanteId = visitanteResult.rows[0].id;
 
-              const observacao = await ImageProcessing.textFromBlob(row.DS_OBS);
+              const liberacaoId = liberacaoResult.rows[0].id;
 
-              // Insere na tabela unidades_pessoas
               const query = `
-                  UPDATE pessoas set obs = $1 where id_outside = $2 and role = 'visitante';
+                  UPDATE liberacoes set data_fim = $1 where id_outside = $2;
                 `;
 
-              await client.query(query, [observacao, visitanteId]);
+              await client.query(query, [row.DT_ENTRADA, liberacaoId]);
             }
 
-            console.log('observações alteradas com sucesso.');
+            console.log('liberações data_fim alteradas com sucesso.');
             resolve();
           } catch (error) {
-            reject(`Erro ao alterar observações: ${error}`);
+            reject(`Erro ao alterar liberações data_fim: ${error}`);
           } finally {
             client.release();
             firebirdClient.detach();
