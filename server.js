@@ -1,26 +1,25 @@
-const Firebird = require('node-firebird');
-const { Pool } = require('pg');
-const { buildColumnsAndValues } = require('./buildMapeamentos');
-const ImageProcessing = require('./imgProcessing');
+const { pool } = require('./db.js');
+const { bulkInsert } = require('./bulkInsert');
 
-// Configuração do Firebird
-const firebirdConfig = {
-  host: '192.168.0.254',
-  // port: 3050,
-  database: 'C:\\Users\\SERVIDOR\\repos\\bancos\\aracari\\DATA_ACESSO.FDB',
-  user: 'SYSDBA',
-  password: 'masterkey',
-  charset: 'UTF8',
-};
+const mapping = require('./mapeamentos')
 
-// Configuração do PostgreSQL
-const pool = new Pool({
-  user: 'postgres',
-  host: '161.35.99.133',
-  database: 'aracari',
-  password: 'ac3ss0d3pl0y',
-  port: 5432,
-});
+const {
+  getMoradoresFromFirebird,
+  getEventosFromFirebird,
+  getVisitantesFromFirebird,
+  getUnidades,
+  getUnidadesGrupos,
+  getVeiculosMoradores,
+  getVeiculosVisitantes,
+  getPets,
+  getOcorrencias,
+  getComunicados,
+  getCorrespondencias,
+  getDispositivos,
+  getCameras,
+  getAcessosTipos,
+  getLiberacoes
+} = require('./gets');
 
 const especieMap = {
   0: 'caninos',
@@ -77,1446 +76,881 @@ const dentroMap = {
   2: false,
 }
 
-// Função genérica para inserir dados em uma tabela PostgreSQL
-async function insertIntoPostgres(table, columns, values, conflictColumn = null) {
+{/* ---------- MIGRAÇÃO DE CLASSIFICAÇÕES ---------- */ }
+async function migrateClassificacoes() {
+  const rows = await getMoradoresFromFirebird();
+  const columns = Object.values(mapping.pessoa_classificacao); // array de colunas
+
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.pessoa_classificacao).map(key => row[key] ?? null);
+    return values;
+  });
+
+  // Inserir batch no PostgreSQL
+  const insertedIds = await bulkInsert('pessoas_classificacoes', columns, valuesArray);
+
+  console.log(`Migração concluída: ${insertedIds.length} classificações inseridas.`);
+}
+
+{/* ---------- MIGRAÇÃO DE MORADORES ---------- */ }
+async function migrateMoradores() {
+  const rows = await getMoradoresFromFirebird();
+  const columns = Object.values(mapping.morador); // array de colunas
+
+  // Adiciona colunas obrigatórias de pessoas que não vêm do Firebird
+  if (!columns.includes('role')) columns.push('role');
+  if (!columns.includes('documento')) columns.push('documento');
+
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.morador).map(key => {
+      if (key === 'ID_INATIVO') {
+        return row[key] === 0; // true se ativo, false se inativo
+      }
+      return row[key] ?? null;
+    });
+    values.push('residente'); // role fixo
+    values.push(row.NR_CPF_CPNJ || 'NÃO DISPONÍVEL'); // documento
+    return values;
+  });
+
+  // Chama seu bulkInsert
+  const insertedIds = await bulkInsert('pessoas', columns, valuesArray);
+
+  console.log(`Migração concluída: ${insertedIds.length} moradores inseridos.`);
+}
+
+{/* ---------- MIGRAÇÃO DE PROPRIETÁRIOS ---------- */ }
+async function migrateProprietarios(batchSize = 2000) {
+  const rows = await getUnidades();
+  const columnsBase = Object.values(mapping.proprietarios); // colunas do mapping
+
+  // Adiciona colunas fixas
+  if (!columnsBase.includes('role')) columnsBase.push('role');
+  if (!columnsBase.includes('documento')) columnsBase.push('documento');
+  if (!columnsBase.includes('reside')) columnsBase.push('reside');
+
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.proprietarios).map(key => row[key] ?? null);
+    values.push('residente');
+    values.push('N/A');
+    values.push(false);
+    return values;
+  });
+
+  // Inserção em lotes para não travar a memória
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('pessoas', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} registros).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} proprietários inseridos.`);
+}
+
+{/* ---------- MIGRAÇÃO DE UNIDADES GRUPOS ---------- */ }
+async function migrateUnidadesGrupos(batchSize = 2000) {
+  const rows = await getUnidadesGrupos();
+  const columnsBase = Object.values(mapping.unidades_grupos); // colunas do mapping
+
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.unidades_grupos).map(key => row[key] ?? null);
+    return values;
+  });
+
+  // Inserção em lotes para não travar a memória
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('unidades_grupos', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} registros).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} unidades_grupos inseridos.`);
+}
+
+{/* ---------- MIGRAÇÃO DE UNIDADES STATUS ---------- */ }
+async function migrateUnidadeStatus(batchSize = 2000) {
+  const rows = await getUnidadesGrupos();
+  const columnsBase = Object.values(mapping.unidades_status); // colunas do mapping
+
+
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.unidades_status).map(key => row[key] ?? null);
+    return values;
+  });
+
+  // Inserção em lotes para não travar a memória
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('unidades_status', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} registros).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} unidades_status inseridos.`);
+}
+
+{/* ---------- MIGRAÇÃO DE UNIDADES ---------- */ }
+async function migrateUnidades(batchSize = 2000) {
+  const rows = await getUnidades();
+  const columnsBase = Object.values(mapping.unidades); // colunas do mapping
+
+  // Criar mapas para evitar consultas repetidas
   const client = await pool.connect();
+  const gruposMap = new Map();
+  const statusMap = new Map();
+  const pessoasMap = new Map();
+
+  // Precarregar grupos
+  const gruposRes = await client.query('SELECT id_outside, id FROM unidades_grupos');
+  gruposRes.rows.forEach(r => gruposMap.set(r.id_outside, r.id));
+
+  // Precarregar status
+  const statusRes = await client.query('SELECT id_outside, id FROM unidades_status');
+  statusRes.rows.forEach(r => statusMap.set(r.id_outside, r.id));
+
+  // Precarregar pessoas (residentes)
+  const pessoasRes = await client.query("SELECT id_outside, id, nome FROM pessoas WHERE role = 'residente'");
+  pessoasRes.rows.forEach(r => pessoasMap.set(r.nome, r.id));
+
+  // Adicionar colunas extras
+  if (!columnsBase.includes('grupo_unidade_id')) columnsBase.push('grupo_unidade_id');
+  if (!columnsBase.includes('status_id')) columnsBase.push('status_id');
+  if (!columnsBase.includes('prop_pessoa_id')) columnsBase.push('prop_pessoa_id');
+
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.unidades).map(key => row[key] ?? null);
+
+    // Relacionamentos
+    values.push(gruposMap.get(row.ID_GRUPO_UNIDADE) ?? null);     // grupo_unidade_id
+    values.push(statusMap.get(row.ID_TIPO_UNIDADE) ?? 1);          // status_id, default 1
+    values.push(pessoasMap.get(row.NM_PROPRIETARIO) ?? null);      // prop_pessoa_id
+
+    return values;
+  });
+
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('unidades', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} unidades).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} unidades inseridas.`);
+  client.release();
+}
+
+{/* ---------- MIGRAÇÃO DE UNIDADES PESSOAS ---------- */ }
+async function migrateUnidadesPessoas(batchSize = 2000) {
+  const rows = await getMoradoresFromFirebird();
+  const client = await pool.connect();
+
   try {
+    const unidadesMap = new Map();
+    const moradoresMap = new Map();
 
-    const placeholders = columns.map((_, index) => `$${index + 1}`).join(',');
+    const unidadesRes = await client.query('SELECT id_outside, id FROM unidades');
+    unidadesRes.rows.forEach(r => unidadesMap.set(r.id_outside, r.id));
 
-    const query = `
-      INSERT INTO ${table} (${columns.join(',')}, created_at, updated_at)
-      VALUES (${placeholders}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id;
-    `;
-    const result = await client.query(query, values);
-    return result.rows.length > 0 ? result.rows[0].id : null; // Retorna o ID ou null
-  } catch (error) {
-    console.error(`Erro ao inserir na tabela ${table}:`, error);
-    return null;
+    const moradoresRes = await client.query(
+      "SELECT id_outside, id FROM pessoas WHERE role = 'residente'"
+    );
+    moradoresRes.rows.forEach(r => moradoresMap.set(r.id_outside, r.id));
+
+    const valuesArray = rows.map(row => {
+      const unidadeId = unidadesMap.get(row.ID_UNIDADE);
+      const moradorId = moradoresMap.get(row.CD_MORADOR);
+
+      if (!unidadeId || !moradorId) return null;
+
+      return [unidadeId, moradorId];
+    }).filter(v => v !== null);
+
+    const columns = ['unidade_id', 'pessoa_id'];
+
+    for (let i = 0; i < valuesArray.length; i += batchSize) {
+      const batch = valuesArray.slice(i, i + batchSize);
+      // aqui não precisamos capturar insertedIds
+      await bulkInsert('unidades_pessoas', columns, batch, null, false);
+      console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} registros).`);
+    }
+
+    console.log(`Migração concluída: ${valuesArray.length} registros inseridos.`);
   } finally {
     client.release();
   }
 }
 
-async function migrateClassificacoes() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_TIPO_MORADOR',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_TIPO_MORADOR: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'pessoa_classificacao');
-
-                // Inserir morador na tabela `pessoas_classificacoes`
-                const insertedId = await insertIntoPostgres('pessoas_classificacoes', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('pessoas_classificacoes migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar pessoas_classificacoes: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
-async function migrateMoradores() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_MORADOR WHERE ID_TIPO_MORADOR <> 99',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_MORADOR: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              const role = 'residente';
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'morador');
-
-                columns.push('role');
-                values.push(role);
-
-                // RG dos moradores
-                const rg = row.NR_RG?.startsWith('NAORG') ? null : row.NR_RG;
-                columns.push('rg');
-                values.push(rg);
-
-                // CPF dos moradores
-                const cpf = row.NR_CPF_CPNJ === undefined ? 'NÃO DISPONÍVEL' : row.NR_CPF_CPNJ;
-                columns.push('documento');
-                values.push(cpf);
-
-                // Observação convertida de blob para text
-                const observacao = row.OBS
-                  ? await ImageProcessing.textFromBlob(row.OBS)
-                  : null;
-                columns.push('obs');
-                values.push(observacao);
-
-                // Busca o `id da classificacao` no PostgreSQL
-                const classificacaoQuery = `SELECT id FROM pessoas_classificacoes WHERE id_outside = $1`;
-                const classificacaoResult = await client.query(classificacaoQuery, [row.ID_TIPO_MORADOR]);
-
-                if (classificacaoResult.rows.length === 0) {
-                  continue;
-                }
-                const classificacaoId = classificacaoResult.rows[0].id;
-
-                columns.push('classificacao_id');
-                values.push(classificacaoId);
-
-                // Converte o Base64 em JPEG e envia para o servidor
-                const imageBlobMorador = await ImageProcessing.imgToBase64(row.IMG_MORADOR);
-                const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
-
-                if (imageBlobMorador) {
-                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobMorador);
-
-                  const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
-
-                  // Agora adicionamos o `foto_face_id` na tabela `pessoas`
-                  columns.push('foto_face_id');
-                  values.push(fotoFaceId);
-                }
-
-                if (imageBlobDocumento) {
-                  const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
-
-                  const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
-
-                  columns.push('foto_documento_id');
-                  values.push(documentoId);
-                }
-
-                // Inserir morador na tabela `pessoas`
-                const insertedId = await insertIntoPostgres('pessoas', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('Moradores migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar moradores: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
-async function migrateProprietarios() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_UNIDADE',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_UNIDADE: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              const role = 'residente';
-              try {
-                // Verificar se a pessoa já existe
-                const verifyPessoaQuery = `SELECT id FROM pessoas WHERE nome = $1`;
-                const verifyPessoaResult = await client.query(verifyPessoaQuery, [row.NM_PROPRIETARIO]);
-
-                if (verifyPessoaResult.rows.length > 0) {
-                  continue;
-                }
-
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'proprietarios');
-
-                columns.push('role');
-                values.push(role);
-
-                const documento = 'N/A'
-                columns.push('documento');
-                values.push(documento);
-
-                const reside = false;
-                columns.push('reside');
-                values.push(reside);
-
-                // Inserir proprietário na tabela `pessoas`
-                const insertedId = await insertIntoPostgres('pessoas', columns, values, 'id_outside');
-                console.log(`proprietario de id ${insertedId} inserido com sucesso.`);
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado por falta de dados`);
-                }
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('Proprietário migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar Proprietário: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
-async function migrateUnidadesGrupos() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_GRUPO_UNIDADE',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_GRUPO_UNIDADE: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'unidades_grupos');
-
-                // Inserir unidade na tabela `unidades`
-                const insertedId = await insertIntoPostgres('unidades_grupos', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('unidades_grupos migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar unidades_grupos: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
-async function migrateUnidadeStatus() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_TIPO_UNIDADE',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_TIPO_UNIDADE: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'unidades_status');
-
-                const insertedId = await insertIntoPostgres('unidades_status', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('unidades_status migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar unidades_status: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
-async function migrateUnidades() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_UNIDADE',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_UNIDADE: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'unidades');
-
-                // Consulta para o grupo da unidade
-                const unidadeGrupoQuery = `SELECT id FROM unidades_grupos WHERE id_outside = $1`;
-                const unidadeGrupoResult = await client.query(unidadeGrupoQuery, [row.ID_GRUPO_UNIDADE]);
-
-                if (unidadeGrupoResult.rows.length > 0) {
-                  const unidadeGrupoId = unidadeGrupoResult.rows[0].id;
-                  columns.push('grupo_unidade_id');
-                  values.push(unidadeGrupoId);
-                } else {
-                  // Se não encontrar, insere NULL
-                  columns.push('grupo_unidade_id');
-                  values.push(null);
-                }
-
-                // Consulta para o status da unidade
-                const unidadeStatusQuery = `SELECT id FROM unidades_grupos WHERE id_outside = $1`;
-                const unidadeStatusResult = await client.query(unidadeStatusQuery, [row.ID_TIPO_UNIDADE]);
-
-                if (unidadeStatusResult.rows.length > 0) {
-                  const unidadeStatusId = unidadeStatusResult.rows[0].id;
-                  columns.push('status_id');
-                  values.push(unidadeStatusId);
-                } else {
-                  // Se não encontrar, insere NULL
-                  columns.push('status_id');
-                  values.push(1);
-                }
-
-                // Consulta para proprietários
-                const proprietarioQuery = `SELECT id FROM pessoas where nome = $1 and role = 'residente'`
-                const proprietarioResult = await client.query(proprietarioQuery, [row.NM_PROPRIETARIO]);
-
-                if (proprietarioResult.rows.length > 0) {
-                  const proprietarioId = proprietarioResult.rows[0].id;
-                  columns.push('prop_pessoa_id');
-                  values.push(proprietarioId);
-                } else {
-                  columns.push('prop_pessoa_id');
-                  values.push(null);
-                }
-
-                // Inserir unidade na tabela `unidades`
-                const insertedId = await insertIntoPostgres('unidades', columns, values, 'id_outside');
-                console.log(`inserido unidade de id ${insertedId}`)
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-
-            }
-            console.log('unidades migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar unidades: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
-async function migrateUnidadesPessoas() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
-
-      firebirdClient.query(
-        'SELECT * FROM TAB_MORADOR where ID_TIPO_MORADOR <> 99',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_MORADOR: ${err}`);
-          }
-
-          const client = await pool.connect(); // Conecta ao pool uma vez
-          try {
-            for (const row of result) {
-              try {
-                // Consulta unidade
-                const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
-                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
-                if (unidadeResult.rows.length === 0) {
-                  console.warn(`Unidade não encontrada para ID_OUTSIDE: ${row.ID_UNIDADE}`);
-                  continue;
-                }
-                const unidadeId = unidadeResult.rows[0].id;
-
-                // Consulta morador
-                const moradorQuery = `SELECT id FROM pessoas WHERE id_outside = $1 AND role = 'residente'`;
-                const moradorResult = await client.query(moradorQuery, [row.CD_MORADOR]);
-                if (moradorResult.rows.length === 0) {
-                  console.warn(`Morador não encontrado para ID_OUTSIDE: ${row.CD_MORADOR}`);
-                  continue;
-                }
-                const moradorId = moradorResult.rows[0].id;
-
-                // Insere na tabela unidades_pessoas
-                const query = `
-                  INSERT INTO unidades_pessoas (unidade_id, pessoa_id, created_at, updated_at)
-                  VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                  RETURNING unidade_id;
-                `;
-
-                await client.query(query, [unidadeId, moradorId]);
-              } catch (error) {
-                console.error(`Erro ao processar row ID_OUTSIDE=${row.CD_MORADOR}:`, error);
-              }
-            }
-            console.log('Migração de unidades_pessoas concluída com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar unidades_pessoas: ${error}`);
-          } finally {
-            // Libera o cliente e desconecta do Firebird no final
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
-
+{/* ---------- MIGRAÇÃO DE VISITANTES ---------- */ }
 async function migrateVisitantes() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+  const rows = await getVisitantesFromFirebird();
+  const columns = Object.values(mapping.visitante);
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_PRESTADOR',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_PRESTADOR: ${err}`);
-          }
+  if (!columns.includes('role')) columns.push('role');
+  if (!columns.includes('documento')) columns.push('documento');
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                const role = 'visitante';
+  // tamanho do lote
+  const batchSize = 2000;
 
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'visitante');
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize);
 
-                columns.push('role');
-                values.push(role);
-
-                const cpf = row.NR_CPF_CPNJ === undefined ? 'NÃO DISPONÍVEL' : row.NR_CPF_CPNJ;
-                columns.push('documento');
-                values.push(cpf);
-
-                // Converte o Base64 em JPEG e envia para o servidor
-                const imageBlobVisitante = await ImageProcessing.imgToBase64(row.IMG_FACE);
-                const imageBlobDocumento = await ImageProcessing.imgToBase64(row.IMG_DOCUMENTO)
-
-                if (imageBlobVisitante) {
-                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVisitante);
-
-                  const fotoFaceId = await ImageProcessing.sendImageToServer(imagePath);
-
-                  columns.push('foto_face_id');
-                  values.push(fotoFaceId);
-                }
-
-                if (imageBlobDocumento) {
-                  const imagePathDocumento = await ImageProcessing.base64ToJPEG(imageBlobDocumento);
-
-                  const documentoId = await ImageProcessing.sendImageToServer(imagePathDocumento);
-
-                  columns.push('foto_documento_id');
-                  values.push(documentoId);
-                }
-
-                // Realiza o SELECT para obter o DS_OBS convertido
-                const obsQuery = `SELECT CAST(DS_OBS AS VARCHAR(4000)) AS observacao FROM TAB_PRESTADOR WHERE CD_PRESTADOR = ?`;
-                const [obsResult] = await new Promise((resolve, reject) => {
-                  firebirdClient.query(obsQuery, [row.CD_PRESTADOR], (err, result) => {
-                    if (err) return reject(err);
-                    resolve(result);
-                  });
-                });
-
-                if (obsResult) {
-                  const observacao = obsResult.OBSERVACAO || null;
-                  columns.push('obs');
-                  values.push(observacao);
-                }
-
-                // Inserir visitante na tabela`pessoas`
-                const insertedId = await insertIntoPostgres('pessoas', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('Visitantes migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar visitantes: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
+    const valuesArray = batch.map(row => {
+      const values = Object.keys(mapping.visitante).map(key => {
+        if (key === 'ID_INATIVO') {
+          return row[key] === 0; // true se ativo, false se inativo
         }
-      );
+        return row[key] ?? null;
+      });
+
+      values.push('visitante');
+      values.push(row.NR_CPF_CPNJ || 'NÃO DISPONÍVEL');
+      return values;
     });
-  });
+
+    const insertedIds = await bulkInsert('pessoas', columns, valuesArray);
+    console.log(`Lote ${i / batchSize + 1}: ${insertedIds.length} visitantes inseridos.`);
+  }
+
+  console.log(`Migração concluída: ${rows.length} visitantes inseridos no total.`);
 }
 
-async function migrateVeiculosMoradores() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE VEÍCULOS MORADORES ---------- */ }
+async function migrateVeiculosMoradores(batchSize = 2000) {
+  const rows = await getVeiculosMoradores();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_VEICULO_MORADOR',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_VEICULO_MORADOR: ${err}`);
-          }
+  // Conecta no PostgreSQL
+  const client = await pool.connect();
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'veiculo');
+  const unidadesMap = new Map();
 
-                // Busca o `id da unidade` no PostgreSQL
-                const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
-                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
+  // Precarrega unidades para evitar consultas repetidas
+  const unidadesRes = await client.query('SELECT id_outside, id FROM unidades');
+  unidadesRes.rows.forEach(r => unidadesMap.set(r.id_outside, r.id));
 
-                if (unidadeResult.rows.length === 0) {
-                  continue;
-                }
-                const unidadeId = unidadeResult.rows[0].id;
+  // Colunas base do mapeamento
+  const columnsBase = Object.values(mapping.veiculo);
 
-                columns.push('unidade_id');
-                values.push(unidadeId);
+  // Adiciona colunas extras
+  if (!columnsBase.includes('unidade_id')) columnsBase.push('unidade_id');
+  if (!columnsBase.includes('tipo')) columnsBase.push('tipo');
 
-                // verifica o tipo de veículo, se é carro ou moto
-                const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
-                columns.push('tipo');
-                values.push(tipoVeiculo);
-
-                // IMAGEM do veículo
-                const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
-
-                if (imageBlobVeiculo) {
-                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
-
-                  const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
-
-                  columns.push('foto_id');
-                  values.push(veiculoImageId);
-                }
-
-                // Inserir morador na tabela `pessoas`
-                const insertedId = await insertIntoPostgres('veiculos', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('veiculos de moradores migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar veiculos de moradores: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
+  const valuesArray = rows.map(row => {
+    // const values = Object.keys(mapping.veiculo).map(key => row[key] ?? null);
+    const values = Object.keys(mapping.veiculo).map(key => {
+      if (key === 'ID_INATIVO') {
+        return row[key] === 0; // true se ativo, false se inativo
+      }
+      return row[key] ?? null;
     });
-  });
+
+    // Unidade
+    const unidadeId = unidadesMap.get(row.ID_UNIDADE) ?? null;
+    values.push(unidadeId);
+
+    // Tipo de veículo
+    const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
+    values.push(tipoVeiculo);
+
+    return values;
+  }).filter(v => v[columnsBase.indexOf('unidade_id')] !== null);
+
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('veiculos', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} veículos).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} veículos inseridos.`);
+  client.release();
 }
 
-async function migrateVeiculosVisitantes() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE VEÍCULOS VISITANTES ---------- */ }
+async function migrateVeiculosVisitantes(batchSize = 2000) {
+  const rows = await getVeiculosVisitantes();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_VEICULO_VISITANTE',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_VEICULO_VISITANTE: ${err}`);
-          }
+  // Conecta no PostgreSQL
+  const client = await pool.connect();
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'veiculo');
+  const propsMap = new Map();
 
-                // Busca o `id do visitante` no PostgreSQL
-                const visitanteQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
-                const visitanteResult = await client.query(visitanteQuery, [row.ID_VISITANTE]);
+  // Precarrega unidades para evitar consultas repetidas
+  const propsRes = await client.query(
+    "SELECT id_outside, id FROM pessoas WHERE role = 'visitante'"
+  );
+  propsRes.rows.forEach(r => propsMap.set(r.id_outside, r.id));
 
-                if (visitanteResult.rows.length === 0) {
-                  continue;
-                }
-                const visitanteId = visitanteResult.rows[0].id;
+  // Colunas base do mapeamento
+  const columnsBase = Object.values(mapping.veiculo);
 
-                columns.push('pessoa_id');
-                values.push(visitanteId);
+  // Adiciona colunas extras
+  if (!columnsBase.includes('pessoa_id')) columnsBase.push('pessoa_id');
+  if (!columnsBase.includes('tipo')) columnsBase.push('tipo');
 
-                // verifica o tipo de veículo, se é carro ou moto
-                const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
-                columns.push('tipo');
-                values.push(tipoVeiculo);
-
-                // IMAGEM do veículo
-                const imageBlobVeiculo = await ImageProcessing.imgToBase64(row.IMG_VEICULO);
-
-                if (imageBlobVeiculo) {
-                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobVeiculo);
-
-                  const veiculoImageId = await ImageProcessing.sendImageToServer(imagePath);
-
-                  columns.push('foto_id');
-                  values.push(veiculoImageId);
-                }
-
-                // Inserir morador na tabela `pessoas`
-                const insertedId = await insertIntoPostgres('veiculos', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('veiculos de visitantes migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar veiculos de visitantes: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
+  const valuesArray = rows.map(row => {
+    // const values = Object.keys(mapping.veiculo).map(key => row[key] ?? null);
+    const values = Object.keys(mapping.veiculo).map(key => {
+      if (key === 'ID_INATIVO') {
+        return row[key] === 0; // true se ativo, false se inativo
+      }
+      return row[key] ?? null;
     });
-  });
+
+    // Unidade
+    const visitanteId = propsMap.get(row.ID_VISITANTE) ?? null;
+    values.push(visitanteId);
+
+    // Tipo de veículo
+    const tipoVeiculo = row.ID_TIPO_VEICULO === 'C' ? 'carro' : 'moto';
+    values.push(tipoVeiculo);
+
+    return values;
+  }).filter(v => v[columnsBase.indexOf('pessoa_id')] !== null);
+
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('veiculos', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} veículos).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} veículos inseridos.`);
+  client.release();
 }
 
-async function migratePets() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE PETS ---------- */ }
+async function migratePets(batchSize = 2000) {
+  const rows = await getPets();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_ANIMAL_DOMESTICO',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_ANIMAL_DOMESTICO: ${err}`);
-          }
+  const client = await pool.connect();
+  const unidadesMap = new Map();
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'pets');
+  // Precarregar unidades do PostgreSQL
+  const unidadesRes = await client.query('SELECT id_outside, id FROM unidades');
+  unidadesRes.rows.forEach(r => unidadesMap.set(r.id_outside, r.id));
 
-                const unidadeQuery = `SELECT id FROM unidades WHERE id_outside = $1`;
-                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
+  // Colunas base do mapping
+  const columnsBase = Object.values(mapping.pets);
 
-                if (unidadeResult.rows.length === 0) {
-                  continue;
-                }
-                const unidadeId = unidadeResult.rows[0].id;
+  // Adiciona colunas extras se não existirem
+  if (!columnsBase.includes('unidade_id')) columnsBase.push('unidade_id');
+  if (!columnsBase.includes('especie')) columnsBase.push('especie');
+  if (!columnsBase.includes('peso')) columnsBase.push('peso');
 
-                columns.push('unidade_id');
-                values.push(unidadeId);
+  // Prepara os valores para bulk insert
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.pets).map(key => row[key] ?? null);
 
-                // inserindo a espécie baseado no id vindo do firebird
-                const especie = especieMap[row.ID_TIPO] || 'outros';
-                columns.push('especie');
-                values.push(especie);
+    // Unidade
+    const unidadeId = unidadesMap.get(row.ID_UNIDADE) ?? null;
+    values.push(unidadeId);
 
-                // inserindo o peso baseado no id vindo do firebird
-                const peso = pesoMap[row.ID_PESO] || 'outro';
-                columns.push('peso');
-                values.push(peso);
+    // Espécie
+    const especie = especieMap[row.ID_TIPO] || 'outros';
+    values.push(especie);
 
-                // IMAGEM do pet
-                const imageBlobPet = await ImageProcessing.imgToBase64(row.IMG_ANIMAL);
+    // Peso
+    const peso = pesoMap[row.ID_PESO] || 'outro';
+    values.push(peso);
 
-                if (imageBlobPet) {
-                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobPet);
+    return values;
+  }).filter(v => v[columnsBase.indexOf('unidade_id')] !== null);
 
-                  const petImageId = await ImageProcessing.sendImageToServer(imagePath);
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('pets', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} pets).`);
+  }
 
-                  columns.push('foto_id');
-                  values.push(petImageId);
-                }
-
-                // Inserir animais na tabela `pets`
-                const insertedId = await insertIntoPostgres('pets', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('pets migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar pets: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
+  console.log(`Migração concluída: ${valuesArray.length} pets inseridos.`);
+  client.release();
 }
 
-async function migrateOcorrencias() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE OCORRÊNCIAS ---------- */ }
+async function migrateOcorrencias(batchSize = 2000) {
+  const rows = await getOcorrencias();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_OCORRENCIA',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_OCORRENCIA: ${err}`);
-          }
+  // Colunas base do mapeamento
+  const columnsBase = Object.values(mapping.ocorrencia);
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'ocorrencia');
-
-                // Inserir ocorrencias na tabela `ocorrencias`
-                const insertedId = await insertIntoPostgres('ocorrencias', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('ocorrencias migradas com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar ocorrencias: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.ocorrencia).map(key => row[key] ?? null);
+    return values;
   });
+
+  // Inserção em lotes para não travar a memória
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('ocorrencias', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} registros).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} ocorrencias inseridas.`);
 }
 
-async function migrateComunicados() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE COMUNICADOS ---------- */ }
+async function migrateComunicados(batchSize = 2000) {
+  const rows = await getComunicados();
 
-      firebirdClient.query(
-        'SELECT * FROM COMUNICADO',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar COMUNICADO: ${err}`);
-          }
+  // Colunas base do mapeamento
+  const columnsBase = Object.values(mapping.comunicados);
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'comunicados');
-
-                // IMAGEM do comunicado
-                const imageBlobComunicado = await ImageProcessing.imgToBase64(row.IMG_COMUNICADO);
-
-                if (imageBlobComunicado) {
-                  const imagePath = await ImageProcessing.base64ToJPEG(imageBlobComunicado);
-
-                  const comunicadoImageId = await ImageProcessing.sendImageToServer(imagePath);
-
-                  columns.push('foto_id');
-                  values.push(comunicadoImageId);
-                }
-
-                // Inserir comunicados na tabela `comunicados`
-                const insertedId = await insertIntoPostgres('comunicados', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('comunicados migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar comunicados: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.comunicados).map(key => row[key] ?? null);
+    return values;
   });
+
+  // Inserção em lotes para não travar a memória
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('comunicados', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} registros).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} comunicados inseridas.`);
 }
 
-async function migrateCorrespondencias() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE CORRESPONDÊNCIAS ---------- */ }
+async function migrateCorrespondencias(batchSize = 2000) {
+  const rows = await getCorrespondencias();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_ENTREGA_AVISO',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_ENTREGA_AVISO: ${err}`);
-          }
+  const client = await pool.connect();
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'correspondencia');
+  // Colunas base do mapeamento
+  const columnsBase = Object.values(mapping.correspondencia);
 
-                // Consulta de unidade
-                const unidadeQuery = `SELECT id FROM unidades where id_outside = $1`
-                const unidadeResult = await client.query(unidadeQuery, [row.ID_UNIDADE]);
+  // Adiciona colunas extras
+  if (!columnsBase.includes('unidade_id')) columnsBase.push('unidade_id');
+  if (!columnsBase.includes('pessoa_id_entregue')) columnsBase.push('pessoa_id_entregue');
+  if (!columnsBase.includes('entregue')) columnsBase.push('entregue');
 
-                if (unidadeResult.rows.length > 0) {
-                  const unidadeId = unidadeResult.rows[0].id;
-                  columns.push('unidade_id');
-                  values.push(unidadeId);
-                }
+  // Pré-carregar unidades e moradores para evitar consultas repetidas
+  const unidadesMap = new Map();
+  const moradoresMap = new Map();
 
-                // Consulta de morador entregue
-                const moradorQuery = `SELECT id FROM pessoas where id_outside = $1 and role = 'residente'`
-                const moradorResult = await client.query(moradorQuery, [row.ID_MORADOR_ENTREGUE]);
+  const unidadesRes = await client.query('SELECT id_outside, id FROM unidades');
+  unidadesRes.rows.forEach(r => unidadesMap.set(r.id_outside, r.id));
 
-                if (moradorResult.rows.length > 0) {
-                  const moradorId = moradorResult.rows[0].id;
-                  columns.push('pessoa_id_entregue');
-                  values.push(moradorId);
-                }
+  const moradoresRes = await client.query("SELECT id_outside, id FROM pessoas WHERE role = 'residente'");
+  moradoresRes.rows.forEach(r => moradoresMap.set(r.id_outside, r.id));
 
-                // verificar se a correspondência foi entregue ou não
-                const entregueBoolean = row.ID_STATUSO = 1 ? false : true;
-                columns.push('entregue');
-                values.push(entregueBoolean);
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.correspondencia).map(key => row[key] ?? null);
 
-                // Inserir tab_entrega_aviso na tabela `correspondencias`
-                const insertedId = await insertIntoPostgres('correspondencias', columns, values, 'id_outside');
-                console.log(`inserido correspondência de id: ${insertedId}`);
+    // Unidade
+    const unidadeId = unidadesMap.get(row.ID_UNIDADE) ?? null;
+    values.push(unidadeId);
 
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
+    // Morador entregue
+    const moradorId = moradoresMap.get(row.ID_MORADOR_ENTREGUE) ?? null;
+    values.push(moradorId);
 
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
+    // Status de entrega
+    const entregueBoolean = row.ID_STATUSO === 1 ? false : true;
+    values.push(entregueBoolean);
 
-            console.log('correspondências migradas com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar correspondências: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
+    return values;
+  }).filter(v => v[columnsBase.indexOf('unidade_id')] !== null);
+
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('correspondencias', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} correspondências).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} correspondências inseridas.`);
+  client.release();
 }
 
-async function migrateDispositivos() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE DISPOSITIVOS ---------- */ }
+async function migrateDispositivos(batchSize = 2000) {
+  const rows = await getDispositivos();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_DISPOSITIVO',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_DISPOSITIVO: ${err}`);
-          }
+  const client = await pool.connect();
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'dispositivo');
+  // Colunas base do mapping
+  const columnsBase = Object.values(mapping.dispositivo);
 
-                if (row.CD_DISPOSITIVO === 99) {
-                  continue;
-                }
+  // Adiciona colunas extras se não existirem
+  if (!columnsBase.includes('fabricante')) columnsBase.push('fabricante');
+  if (!columnsBase.includes('controle_letra')) columnsBase.push('controle_letra');
+  if (!columnsBase.includes('facial_tipos_lib')) columnsBase.push('facial_tipos_lib');
 
-                // 1 = control id, 2 = argus, 3 = hikvision
-                let idFabricante;
-                if (row.ID_FABRICANTE === 8) {
-                  idFabricante = 3;
-                }
+  // Prepara os valores para bulk insert
+  const valuesArray = rows
+    .filter(row => row.CD_DISPOSITIVO !== 99) // ignora dispositivos com CD_DISPOSITIVO 99 (liberação manual)
+    .map(row => {
+      const values = Object.keys(mapping.dispositivo).map(key => row[key] ?? null);
 
-                columns.push('fabricante');
-                values.push(idFabricante);
+      // Fabricante
+      const idFabricante = row.ID_FABRICANTE === 8 ? 3 : null; // hikvision
+      values.push(idFabricante);
 
-                // Letra de controle
-                const letra = letraControle[row.ID_LETRA_CONTROLE] || 'outros';
-                columns.push('controle_letra');
-                values.push(letra);
+      // Letra de controle
+      const letra = letraControle[row.ID_LETRA_CONTROLE] || 'outros';
+      values.push(letra);
 
-                // Tipos de liberação (unica, período, ambas)
-                const tipoLib = facialTipoLib[row.ID_FACIAL_TIPO_LIB_VIS];
-                columns.push('facial_tipos_lib');
-                values.push(tipoLib);
+      // Tipos de liberação
+      const tipoLib = facialTipoLib[row.ID_FACIAL_TIPO_LIB_VIS] || null;
+      values.push(tipoLib);
 
-                // Inserir dispositivos na tabela `dispositivos`
-                const insertedId = await insertIntoPostgres('dispositivos', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('dispositivos migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar dispositivos: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
+      return values;
     });
-  });
+
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('dispositivos', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} dispositivos).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} dispositivos inseridos.`);
+  client.release();
 }
 
+{/* ---------- MIGRAÇÃO DE CÂMERAS ---------- */ }
 async function migrateCameras() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+  const rows = await getCameras();
+  const columns = Object.values(mapping.cameras); // array de colunas
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_CAMERA',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_CAMERA: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'cameras');
-
-                // Inserir TAB_CAMERA na tabela `cameras`
-                const insertedId = await insertIntoPostgres('cameras', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('cameras migradas com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar cameras: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.cameras).map(key => row[key] ?? null);
+    return values;
   });
+
+  // Inserir batch no PostgreSQL
+  const insertedIds = await bulkInsert('cameras', columns, valuesArray);
+
+  console.log(`Migração concluída: ${insertedIds.length} cameras inseridas.`);
 }
 
 async function migrateLiberacoesAcessosTipo() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+  const rows = await getAcessosTipos();
+  const columns = Object.values(mapping.liberacoesAcessoTipo); // array de colunas
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_TIPO_ACESSO',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_TIPO_ACESSO: ${err}`);
-          }
-
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'liberacoesAcessoTipo');
-
-                // Inserir tipo acesso na tabela `liberacoes_acessos_tipos`
-                const insertedId = await insertIntoPostgres('liberacoes_acessos_tipos', columns, values, 'id_outside');
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('liberacoes_acessos_tipos migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar liberacoes_acessos_tipos: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
+  // Monta os valores
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.liberacoesAcessoTipo).map(key => row[key] ?? null);
+    return values;
   });
+
+  // Inserir batch no PostgreSQL
+  const insertedIds = await bulkInsert('liberacoes_acessos_tipos', columns, valuesArray);
+
+  console.log(`Migração concluída: ${insertedIds.length} liberacoes_acessos_tipos inseridos.`);
 }
 
+{/* ---------- MIGRAÇÃO DE LIBERAÇÕES ---------- */ }
+async function migrateLiberacoes(batchSize = 2000) {
+  const rows = await getLiberacoes();
 
-async function migrateLiberacoes() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+  const client = await pool.connect();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_ACESSO_PRESTADOR',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
-          }
+  const columnsBase = Object.values(mapping.liberacoes); // array de colunas
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'liberacoes');
+  // Adiciona colunas extras
+  if (!columnsBase.includes('status')) columnsBase.push('status');
+  if (!columnsBase.includes('tipo')) columnsBase.push('tipo');
+  if (!columnsBase.includes('dentro')) columnsBase.push('dentro');
+  if (!columnsBase.includes('veiculo_id')) columnsBase.push('veiculo_id');
+  if (!columnsBase.includes('pessoa_id')) columnsBase.push('pessoa_id');
+  if (!columnsBase.includes('acesso_tipo_id')) columnsBase.push('acesso_tipo_id');
 
-                const status = statusLiberacao[row.ID_STATUS];
-                columns.push('status');
-                values.push(status);
+  // Pré-carregar relacionamentos para evitar consultas repetidas
+  const veiculosRes = await client.query('SELECT id_outside, id FROM veiculos WHERE pessoa_id IS NOT NULL');
+  const veiculosMap = new Map(veiculosRes.rows.map(r => [r.id_outside, r.id]));
 
-                const tipo = tipoLiberacao[row.ID_TIPO_LIBERACAO];
-                columns.push('tipo');
-                values.push(tipo);
+  const visitantesRes = await client.query("SELECT id_outside, id FROM pessoas WHERE role = 'visitante'");
+  const visitantesMap = new Map(visitantesRes.rows.map(r => [r.id_outside, r.id]));
 
-                const dentro = dentroMap[row.ID_STATUS];
-                columns.push('dentro');
-                values.push(dentro);
+  const tiposAcessoRes = await client.query('SELECT id_outside, id FROM liberacoes_acessos_tipos');
+  const tiposAcessoMap = new Map(tiposAcessoRes.rows.map(r => [r.id_outside, r.id]));
 
-                const veiculo = `SELECT id FROM veiculos WHERE id_outside = $1 and pessoa_id is not null`;
-                const veiculoResult = await client.query(veiculo, [row.ID_VEICULO_UTILIZADO]);
-
-                if (veiculoResult.rows.length > 0) {
-                  const veiculoId = veiculoResult.rows[0].id;
-                  columns.push('veiculo_id');
-                  values.push(veiculoId);
-                } else {
-                  columns.push('veiculo_id');
-                  values.push(null);
-                }
-
-                const visitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
-                const visitanteResult = await client.query(visitante, [row.ID_PRESTADOR]);
-
-                if (visitanteResult.rows.length > 0) {
-                  const visitanteId = visitanteResult.rows[0].id;
-                  columns.push('pessoa_id');
-                  values.push(visitanteId);
-                } else {
-                  columns.push('pessoa_id');
-                  values.push(null);
-                }
-
-                const tipoAcesso = `SELECT id FROM liberacoes_acessos_tipos WHERE id_outside = $1`;
-                const tipoAcessoResult = await client.query(tipoAcesso, [row.ID_TIPO_ACESSO]);
-
-                const tipoAcessoResultId = tipoAcessoResult.rows[0].id;
-
-                columns.push('acesso_tipo_id');
-                values.push(tipoAcessoResultId)
-
-                // Inserir liberacoes na tabela `liberacoes`
-                const insertedId = await insertIntoPostgres('liberacoes', columns, values, 'id_outside');
-
-                console.log(`inserido liberação do visitante id ${visitanteResult.rows[0]?.id}`)
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('liberacoes migradas com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar liberacoes: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
+  // Prepara os valores para bulk insert
+  const valuesArray = rows.map(row => {
+    // const values = Object.keys(mapping.liberacoes).map(key => row[key] ?? null);
+    const values = Object.keys(mapping.liberacoes).map(key => {
+      if (key === 'DT_LIBERADO_ATE') {
+        // Ajusta somente se for do tipo "única"
+        const tipo = tipoLiberacao[row.ID_TIPO_LIBERACAO];
+        if (tipo === 'unica' && row.DT_ENTRADA) {
+          const inicio = new Date(row.DT_ENTRADA);
+          // força hora 23:59:59
+          inicio.setHours(23, 59, 59, 0);
+          return inicio.toISOString();
         }
-      );
+        return row[key] ?? null;
+      }
+
+      return row[key] ?? null;
     });
+
+    // Status, tipo, dentro
+    values.push(statusLiberacao[row.ID_STATUS] ?? null);
+    values.push(tipoLiberacao[row.ID_TIPO_LIBERACAO] ?? null);
+    values.push(dentroMap[row.ID_STATUS] ?? null);
+
+    // Veículo
+    values.push(veiculosMap.get(row.ID_VEICULO_UTILIZADO) ?? null);
+
+    // Visitante
+    values.push(visitantesMap.get(row.ID_PRESTADOR) ?? null);
+
+    // Tipo de acesso
+    values.push(tiposAcessoMap.get(row.ID_TIPO_ACESSO) ?? null);
+
+    return values;
   });
+
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('liberacoes', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} liberações).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} liberações inseridas.`);
+  client.release();
 }
 
-async function migrateLiberacoesUnidades() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+{/* ---------- MIGRAÇÃO DE LIBERAÇÕES UNIDADES ---------- */ }
+async function migrateLiberacoesUnidades(batchSize = 2000) {
+  const rows = await getLiberacoes();
+  const client = await pool.connect();
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_ACESSO_PRESTADOR',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
-          }
+  // Normaliza colunas do mapeamento
+  const columnsBase = Object.values(mapping.liberacoesUnidades).map(c => c.trim());
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'liberacoesUnidades');
+  // Adiciona colunas extras
+  if (!columnsBase.includes('liberacao_id')) columnsBase.push('liberacao_id');
+  if (!columnsBase.includes('unidade_id')) columnsBase.push('unidade_id');
+  if (!columnsBase.includes('solicitante_id')) columnsBase.push('solicitante_id');
 
-                const liberacaoId = `SELECT id FROM liberacoes WHERE id_outside = $1`;
-                const liberacaoIdResult = await client.query(liberacaoId, [row.CD_ACESSO]);
+  // Pré-carregar relacionamentos
+  const liberacoesRes = await client.query('SELECT id_outside, id FROM liberacoes');
+  const liberacoesMap = new Map(liberacoesRes.rows.map(r => [r.id_outside, r.id]));
 
-                if (liberacaoIdResult.rows.length > 0) {
-                  const liberacaoId = liberacaoIdResult.rows[0].id;
-                  columns.push('liberacao_id');
-                  values.push(liberacaoId);
-                }
+  const pessoasRes = await client.query(`SELECT id_outside, id FROM pessoas WHERE role = 'residente'`);
+  const pessoasMap = new Map(pessoasRes.rows.map(r => [r.id_outside, r.id]));
 
-                const unidade = `SELECT unidade_id FROM unidades_pessoas up inner join pessoas p on up.pessoa_id = p.id WHERE p.id_outside = $1`;
-                const unidadeResult = await client.query(unidade, [row.ID_MORADOR]);
+  const unidadesPessoasRes = await client.query(
+    `SELECT up.pessoa_id, up.unidade_id 
+     FROM unidades_pessoas up 
+     INNER JOIN pessoas p ON up.pessoa_id = p.id`
+  );
+  const unidadesMap = new Map(unidadesPessoasRes.rows.map(r => [r.pessoa_id, r.unidade_id]));
 
-                if (unidadeResult.rows.length > 0) {
-                  const unidadeId = unidadeResult.rows[0].unidade_id;
-                  columns.push('unidade_id');
-                  values.push(unidadeId);
-                }
+  // Função para normalizar valores antes de inserir
+  function normalizeValue(colName, value) {
+    if (value == null) return null;
+    const col = colName.trim().toLowerCase();
 
-                const solicitante = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'residente'`;
-                const solicitanteResult = await client.query(solicitante, [row.ID_MORADOR]);
+    // Campos do tipo time
+    if (col.includes('hr_')) {
+      const d = new Date(value);
+      if (isNaN(d)) return null;
+      return d.toTimeString().split(' ')[0]; // "HH:MM:SS"
+    }
 
-                if (solicitanteResult.rows.length > 0) {
-                  const solicitanteId = solicitanteResult.rows[0].id;
-                  columns.push('solicitante_id');
-                  values.push(solicitanteId);
-                }
+    return value;
+  }
 
-                // Inserir liberacoes na tabela `liberacoes_unidades`
-                const insertedId = await insertIntoPostgres('liberacoes_unidades', columns, values, 'id_outside');
+  // Prepara os valores para bulk insert
+  const valuesArray = rows.map(row => {
+    const values = Object.keys(mapping.liberacoesUnidades).map(
+      key => normalizeValue(mapping.liberacoesUnidades[key], row[key]) ?? null
+    );
 
-                console.log(`inserido liberação de id ${liberacaoIdResult.rows[0]?.id} na unidade ${unidadeResult.rows[0]?.unidade_id}`)
+    const liberacaoId = liberacoesMap.get(row.CD_ACESSO) ?? null;
+    const solicitanteId = pessoasMap.get(row.ID_MORADOR) ?? null;
+    const unidadeId = unidadesMap.get(solicitanteId) ?? null;
 
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
+    values.push(liberacaoId, unidadeId, solicitanteId);
 
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
+    return values;
+  }).filter(v => v[columnsBase.indexOf('liberacao_id')] !== null);
 
-            console.log('liberacoes_unidades migradas com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar liberacoes_unidades: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
+  // Inserção em lotes
+  for (let i = 0; i < valuesArray.length; i += batchSize) {
+    const batch = valuesArray.slice(i, i + batchSize);
+    await bulkInsert('liberacoes_unidades', columnsBase, batch);
+    console.log(`✅ Batch ${i / batchSize + 1} inserido (${batch.length} liberações de unidades).`);
+  }
+
+  console.log(`Migração concluída: ${valuesArray.length} liberações de unidades inseridas.`);
+  client.release();
 }
 
+// async function updateLiberacoesUnidadesFromFirebird(batchSize = 2000) {
+//   const client = await pool.connect();
+
+//   try {
+//     // Consulta os dados diretamente do Firebird
+//     const rows = await getLiberacoes();
+
+//     // Mapas de relacionamento no PostgreSQL
+//     const liberacoesRes = await client.query('SELECT id_outside, id FROM liberacoes');
+//     const liberacoesMap = new Map(liberacoesRes.rows.map(r => [r.id_outside, r.id]));
+
+//     const pessoasRes = await client.query(`SELECT id_outside, id FROM pessoas WHERE role = 'residente'`);
+//     const pessoasMap = new Map(pessoasRes.rows.map(r => [r.id_outside, r.id]));
+
+//     const unidadesPessoasRes = await client.query(
+//       `SELECT up.pessoa_id, up.unidade_id 
+//        FROM unidades_pessoas up 
+//        INNER JOIN pessoas p ON up.pessoa_id = p.id`
+//     );
+//     const unidadesMap = new Map(unidadesPessoasRes.rows.map(r => [r.pessoa_id, r.unidade_id]));
+
+//     // Atualização em batch
+//     for (let i = 0; i < rows.length; i += batchSize) {
+//       const batch = rows.slice(i, i + batchSize);
+
+//       for (const row of batch) {
+//         const liberacaoId = liberacoesMap.get(row.CD_ACESSO) ?? null;
+//         const solicitanteId = pessoasMap.get(row.ID_MORADOR) ?? null;
+//         const unidadeId = unidadesMap.get(solicitanteId) ?? null;
+
+//         if (!liberacaoId) continue; // só atualiza se existir a liberacao correspondente
+
+//         await client.query(
+//           `UPDATE liberacoes_unidades
+//            SET solicitante_id = $1, unidade_id = $2
+//            WHERE liberacao_id = $3`,
+//           [solicitanteId, unidadeId, liberacaoId]
+//         );
+//       }
+
+//       console.log(`✅ Batch ${i / batchSize + 1} atualizado (${batch.length} registros).`);
+//     }
+
+//     console.log('Atualização completa com dados do Firebird.');
+//   } finally {
+//     client.release();
+//   }
+// }
+
+{/* ---------- MIGRAÇÃO DE EVENTOS ---------- */ }
 async function migrateEventos() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+  const rows = await getEventosFromFirebird();
+  const columnsBase = Object.values(mapping.eventos); // colunas mapeadas do Firebird
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_EVENTO_ONLINE',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_EVENTO_ONLINE: ${err}`);
-          }
+  // Adiciona colunas que não vêm do Firebird
+  const extraColumns = ['pessoa_id', 'liberacao_id', 'dispositivo_id', 'direcao'];
+  const columns = [...columnsBase, ...extraColumns];
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
-              try {
-                // função buildColumnsAndValues para gerar as colunas e valores dinamicamente
-                const { columns, values } = buildColumnsAndValues(row, 'eventos');
+  const BATCH_SIZE = 1000;
 
-                let pessoaQuery;
-                let pessoaResult;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
 
-                if (row.ID_TIPO_PESSOA === 0) {
-                  // Busca o `id do morador` no PostgreSQL
-                  pessoaQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'residente'`;
-                  pessoaResult = await client.query(pessoaQuery, [row.ID_PESSOA]);
-                }
-                else {
-                  // Busca o `id do visitante` no PostgreSQL
-                  pessoaQuery = `SELECT id FROM pessoas WHERE id_outside = $1 and role = 'visitante'`;
-                  pessoaResult = await client.query(pessoaQuery, [row.ID_PESSOA]);
-                }
+    const valuesArray = await Promise.all(batch.map(async (row) => {
+      const values = Object.keys(mapping.eventos).map(key => row[key] ?? null);
 
-                if (pessoaResult.rows.length > 0) {
-                  const pessoaId = pessoaResult.rows[0].id;
-                  columns.push('pessoa_id');
-                  values.push(pessoaId);
-                }
+      // pessoa_id
+      let pessoaId = null;
+      if (row.ID_PESSOA) {
+        const role = row.ID_TIPO_PESSOA === 0 ? 'residente' : 'visitante';
+        const res = await pool.query(
+          'SELECT id FROM pessoas WHERE id_outside = $1 AND role = $2',
+          [row.ID_PESSOA, role]
+        );
+        pessoaId = res.rows[0]?.id || null;
+      }
+      values.push(pessoaId);
 
-                // Pegando a liberação id
-                const liberacaoId = `SELECT id FROM liberacoes WHERE id_outside = $1`;
-                const liberacaoIdResult = await client.query(liberacaoId, [row.ID_ACESSO]);
+      // liberacao_id
+      let liberacaoId = null;
+      if (row.ID_ACESSO) {
+        const res = await pool.query(
+          'SELECT id FROM liberacoes WHERE id_outside = $1',
+          [row.ID_ACESSO]
+        );
+        liberacaoId = res.rows[0]?.id || null;
+      }
+      values.push(liberacaoId);
 
-                if (liberacaoIdResult.rows.length > 0) {
-                  const liberacaoId = liberacaoIdResult.rows[0].id;
-                  columns.push('liberacao_id');
-                  values.push(liberacaoId);
-                }
+      // dispositivo_id
+      let dispositivoId = null;
+      if (row.ID_DISPOSITIVO) {
+        const res = await pool.query(
+          'SELECT id FROM dispositivos WHERE id_outside = $1',
+          [row.ID_DISPOSITIVO]
+        );
+        dispositivoId = res.rows[0]?.id || null;
+      }
+      values.push(dispositivoId);
 
-                // Pegando o id do dispositivo
-                const dispositivo = `SELECT id FROM dispositivos WHERE id_outside = $1`;
-                const dispositivoResult = await client.query(dispositivo, [row.ID_DISPOSITIVO]);
+      // direcao
+      const direcao = direcaoMap[row.ID_DIRECAO] || 'indisponivel';
+      values.push(direcao);
 
-                if (dispositivoResult.rows.length > 0) {
-                  const dispositivoId = dispositivoResult.rows[0].id;
-                  columns.push('dispositivo_id');
-                  values.push(dispositivoId);
-                }
+      return values;
+    }));
 
-                // direção (entrada, saída)
-                const direcao = direcaoMap[row.ID_DIRECAO] || 'indisponivel';
-                columns.push('direcao');
-                values.push(direcao);
+    // Inserir batch no PostgreSQL
+    const insertedIds = await bulkInsert('eventos', columns, valuesArray);
+    console.log(`✅ Batch ${i / BATCH_SIZE + 1} inserido (${insertedIds.length} registros)`);
+  }
 
-                // Inserir liberacoes na tabela `liberacoes_unidades`
-                const insertedId = await insertIntoPostgres('eventos', columns, values, 'id_outside');
-                console.log(`inserido evento de id ${liberacaoIdResult.rows[0]?.id}`)
-
-                if (!insertedId) {
-                  console.warn(`Registro ignorado: ${JSON.stringify(row)}`);
-                }
-
-              } catch (error) {
-                console.error(`Erro ao processar registro ${JSON.stringify(row)}:`, error);
-              }
-            }
-
-            console.log('eventos migrados com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao migrar eventos: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
+  console.log('Migração de eventos concluída.');
 }
 
-async function updateDataFimLiberacoes() {
-  return new Promise((resolve, reject) => {
-    Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
-      if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
+// async function updateDataFimLiberacoes() {
+//   return new Promise((resolve, reject) => {
+//     Firebird.attach(firebirdConfig, async (err, firebirdClient) => {
+//       if (err) return reject(`Erro ao conectar ao Firebird: ${err}`);
 
-      firebirdClient.query(
-        'SELECT * FROM TAB_ACESSO_PRESTADOR where ID_TIPO_LIBERACAO = 1',
-        async (err, result) => {
-          if (err) {
-            firebirdClient.detach();
-            return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
-          }
+//       firebirdClient.query(
+//         'SELECT * FROM TAB_ACESSO_PRESTADOR where ID_TIPO_LIBERACAO = 1',
+//         async (err, result) => {
+//           if (err) {
+//             firebirdClient.detach();
+//             return reject(`Erro ao consultar TAB_ACESSO_PRESTADOR: ${err}`);
+//           }
 
-          const client = await pool.connect();
-          try {
-            for (const row of result) {
+//           const client = await pool.connect();
+//           try {
+//             for (const row of result) {
 
-              const liberacaoQuery = `SELECT id FROM liberacoes WHERE id_outside = $1'`;
-              const liberacaoResult = await client.query(liberacaoQuery, [row.CD_ACESSO]);
+//               const liberacaoQuery = `SELECT id FROM liberacoes WHERE id_outside = $1'`;
+//               const liberacaoResult = await client.query(liberacaoQuery, [row.CD_ACESSO]);
 
-              if (liberacaoResult.rows.length === 0) {
-                continue;
-              }
+//               if (liberacaoResult.rows.length === 0) {
+//                 continue;
+//               }
 
-              const liberacaoId = liberacaoResult.rows[0].id;
+//               const liberacaoId = liberacaoResult.rows[0].id;
 
-              const query = `
-                  UPDATE liberacoes set data_fim = $1 where id_outside = $2;
-                `;
+//               const query = `
+//                   UPDATE liberacoes set data_fim = $1 where id_outside = $2;
+//                 `;
 
-              await client.query(query, [row.DT_ENTRADA, liberacaoId]);
-            }
+//               await client.query(query, [row.DT_ENTRADA, liberacaoId]);
+//             }
 
-            console.log('liberações data_fim alteradas com sucesso.');
-            resolve();
-          } catch (error) {
-            reject(`Erro ao alterar liberações data_fim: ${error}`);
-          } finally {
-            client.release();
-            firebirdClient.detach();
-          }
-        }
-      );
-    });
-  });
-}
+//             console.log('liberações data_fim alteradas com sucesso.');
+//             resolve();
+//           } catch (error) {
+//             reject(`Erro ao alterar liberações data_fim: ${error}`);
+//           } finally {
+//             client.release();
+//             firebirdClient.detach();
+//           }
+//         }
+//       );
+//     });
+//   });
+// }
 
 // Função principal para migrar todas as tabelas
 async function migrateAllTables() {
@@ -1580,6 +1014,9 @@ async function migrateAllTables() {
 
     console.log('Iniciando migração de TAB_EVENTO_ONLINE -> eventos...');
     await migrateEventos();
+
+    // console.log('Iniciando o update na tabela liberacoes_unidades');
+    // await updateLiberacoesUnidadesFromFirebird();
 
     console.log('Migração concluída com sucesso!');
   } catch (error) {

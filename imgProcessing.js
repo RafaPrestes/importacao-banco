@@ -23,7 +23,7 @@ class ImageProcessing {
     form.append('file', fs.createReadStream(imagePath));
 
     try {
-      const response = await axios.post('https://api.belsi.com.br/aracari/arquivos', form, {
+      const response = await axios.post('https://api.belsi.com.br/jkjardins/arquivos', form, {
         headers: {
           ...form.getHeaders(),
         },
@@ -63,21 +63,28 @@ class ImageProcessing {
   }
 
   async bufferToBase64(field) {
+    if (!field) return null;
     let img;
 
     await new Promise((resolve, reject) => {
-      field((err, name, eventEmitter) => {
-        const buffers = [];
-        eventEmitter.on('data', (chunk) => {
-          buffers.push(chunk);
-        });
-        eventEmitter.once('end', async () => {
-          const buffer = Buffer.concat(buffers);
-          img = buffer.toString('base64');
+      try {
+        field((err, name, eventEmitter) => {
+          if (err) return reject(err);
+          if (!eventEmitter) return resolve(null);
+          const buffers = [];
+          eventEmitter.on('data', (chunk) => {
+            buffers.push(chunk);
+          });
+          eventEmitter.once('end', async () => {
+            const buffer = Buffer.concat(buffers);
+            img = buffer.toString('base64');
 
-          resolve(img);
+            resolve(img);
+          });
         });
-      });
+      } catch (error) {
+        resolve(null);
+      }
     });
 
     return img;
